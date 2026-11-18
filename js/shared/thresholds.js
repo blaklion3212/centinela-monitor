@@ -39,10 +39,12 @@
   }
 
   // Mensaje en español (el que devuelve la API) cuando un par no respeta el orden.
-  function orderMessage(pair, warn, crit) {
+  // `label` es opcional (la interfaz pasa la etiqueta con unidades); si falta se usa pair.label.
+  function orderMessage(pair, warn, crit, label) {
+    var name = label || pair.label;
     return pair.inverted
-      ? 'En "' + pair.label + '" el aviso (' + warn + ') debe ser mayor que el crítico (' + crit + '): se avisa con más días de margen.'
-      : 'En "' + pair.label + '" el aviso (' + warn + ') debe ser menor que el crítico (' + crit + ').';
+      ? 'En "' + name + '" el aviso (' + warn + ') debe ser mayor que el crítico (' + crit + '): se avisa con más días de margen.'
+      : 'En "' + name + '" el aviso (' + warn + ') debe ser menor que el crítico (' + crit + ').';
   }
 
   return { PAIRS: PAIRS, byId: function (id) { return BY_ID[id] || null; }, isPositiveWarn: isPositiveWarn,

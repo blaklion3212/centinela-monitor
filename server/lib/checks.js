@@ -6,6 +6,7 @@
 var http = require('http');
 var https = require('https');
 var Evaluate = require('../../js/core/evaluate.js');
+var Fingerprint = require('../../js/shared/fingerprint.js');
 var validate = require('./validate');
 var u = require('./util');
 var dnsProbe = require('../probes/dns');
@@ -51,16 +52,13 @@ function normalizeAgent(raw) {
   };
 }
 
-// Huella normalizada ('AA:BB:...') para comparar sin importar mayúsculas ni separadores.
-function normFp(v) { return String(v || '').replace(/:/g, '').toUpperCase(); }
-
 var AGENT_DEADLINE_MS = 10000; // plazo absoluto de una consulta al agente
 
 function agentFetch(ag, host, ip) {
   return new Promise(function (resolve) {
     var settled = false, req = null;
     var useTls = ag.tls === true;
-    var pinned = useTls && ag.fingerprint ? normFp(ag.fingerprint) : '';
+    var pinned = useTls && ag.fingerprint ? Fingerprint.normalize(ag.fingerprint) : '';
     var timer = null;
     function done(v) {
       if (settled) return;
@@ -113,8 +111,8 @@ function agentFetch(ag, host, ip) {
           sock.once('secureConnect', function () {
             var cert = null;
             try { cert = sock.getPeerCertificate(); } catch (e) { cert = null; }
-            var got = cert && cert.fingerprint256 ? normFp(cert.fingerprint256) : '';
-            if (pinned && got !== pinned) {
+            var got = cert && cert.fingerprint256 ? cert.fingerprint256 : '';
+            if (pinned && !(got && Fingerprint.same(pinned, got))) {
               done({ error: 'La huella TLS del agente no coincide (posible suplantación)' });
               req.destroy();
               return;

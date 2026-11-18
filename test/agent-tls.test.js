@@ -282,6 +282,51 @@ test('TLS checks: con tls y sin huella el servidor NO recibe la petición ni Aut
   assert.strictEqual(falso.vistas[0].auth, 'Bearer ' + TOKEN);
 });
 
+test('TLS checks QA4: huella fijada que solo cambia de formato coincide y envía el token (servidor falso)', { skip: SIN_OPENSSL }, async function (t) {
+  if (!(await puedeEnlazar(HOST))) return t.skip('no se puede enlazar ' + HOST + ' en este sistema');
+  var cert = certificado('formato');
+  var falso = await servidorFalso(cert);
+  var base = cert.fingerprint;
+  var variantes = [base.toLowerCase(), base.replace(/:/g, ''), base.replace(/:/g, '').toLowerCase(), '  ' + base.toLowerCase() + '  '];
+  for (var i = 0; i < variantes.length; i++) {
+    var r = await checks.checkTarget(objetivo(falso.port, { tls: true, fingerprint: variantes[i] }), SETTINGS);
+    assert.strictEqual(r.agent.error, undefined, JSON.stringify(variantes[i]) + ' => ' + JSON.stringify(r.agent));
+    assert.strictEqual(falso.vistas.length, i + 1);
+    assert.strictEqual(falso.vistas[i].auth, 'Bearer ' + TOKEN);
+  }
+});
+
+test('TLS checks QA4: huella distinta (aunque con otro formato) no envía el token', { skip: SIN_OPENSSL }, async function (t) {
+  if (!(await puedeEnlazar(HOST))) return t.skip('no se puede enlazar ' + HOST + ' en este sistema');
+  var falso = await servidorFalso(certificado('presentado'));
+  var otra = certificado('esperado').fingerprint;
+  for (var f of [otra, otra.toLowerCase(), otra.replace(/:/g, '')]) {
+    var r = await checks.checkTarget(objetivo(falso.port, { tls: true, fingerprint: f }), SETTINGS);
+    assert.strictEqual(r.agent.error, 'La huella TLS del agente no coincide (posible suplantación)');
+  }
+  await new Promise(function (res) { setTimeout(res, 150); }); // control negativo: nada debe llegar
+  assert.deepStrictEqual(falso.vistas, []);
+});
+
+test('TLS checks QA4: huella guardada mal formada => "Falta la huella TLS del agente" y el token no se envía', { skip: SIN_OPENSSL }, async function (t) {
+  if (!(await puedeEnlazar(HOST))) return t.skip('no se puede enlazar ' + HOST + ' en este sistema');
+  var cert = certificado('malformada');
+  var falso = await servidorFalso(cert);
+  var buena = cert.fingerprint;
+  var malas = [buena.slice(0, 40), buena.replace(/:/, ''), 'zz' + buena.slice(2), buena.replace(/:/g, '-'), '   ', 12345];
+  for (var m of malas) {
+    var r = await checks.checkTarget(objetivo(falso.port, { tls: true, fingerprint: m }), SETTINGS);
+    assert.strictEqual(r.agent.error, 'Falta la huella TLS del agente', JSON.stringify(m));
+    assert.strictEqual(r.agent.cpu, undefined);
+  }
+  await new Promise(function (res) { setTimeout(res, 150); }); // control negativo
+  assert.deepStrictEqual(falso.vistas, [], 'ni petición ni Authorization con una huella inválida');
+  // Control positivo: con la huella bien formada el mismo servidor sí recibe la petición.
+  var ok = await checks.checkTarget(objetivo(falso.port, { tls: true, fingerprint: buena }), SETTINGS);
+  assert.strictEqual(ok.agent.error, undefined, JSON.stringify(ok.agent));
+  assert.strictEqual(falso.vistas.length, 1);
+});
+
 test('TLS checks: tls=true contra un servidor HTTP plano falla sin enviarle el token', async function (t) {
   if (!(await puedeEnlazar(HOST))) return t.skip('no se puede enlazar ' + HOST + ' en este sistema');
   var vistas = [];

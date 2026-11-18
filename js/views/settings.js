@@ -4,7 +4,7 @@
   var U = NOC.util, ui = NOC.ui, store = NOC.store;
 
   var T = NOC.Thresholds; // pares aviso/crítico y su orden, compartidos con el servidor (js/shared/thresholds.js)
-  // Filas del formulario: [id del campo, etiqueta con unidad, clave de aviso, clave crítica, ¿invertido (SSL)?].
+  // Filas del formulario: [id del campo, etiqueta con unidad, clave de aviso, clave crítica, par de umbrales (objeto de PAIRS)].
   // Las claves y el orden salen del módulo compartido; aquí solo viven los textos con unidad y el id del campo en el DOM.
   var UI_LABELS = { latency: ['latency', 'Latencia (ms)'], loss: ['loss', 'Pérdida de paquetes (%)'], jitter: ['jitter', 'Jitter (ms)'],
                     ttfb: ['ttfb', 'TTFB HTTP (ms)'], ssl: ['ssl', 'SSL: días restantes (menor = peor)'], disk: ['disk', 'Disco usado (%)'],
@@ -60,7 +60,7 @@
       TH.forEach(function (r) {
         var w = out.thresholds[r[2]], c = out.thresholds[r[3]];
         if (w == null || c == null) return;
-        if (!T.isOrdered(r[4], w, c)) errs.push(r[4].inverted ? 'SSL: el aviso (' + w + ' días) debe ser mayor que el crítico (' + c + ' días).' : r[1] + ': el aviso (' + w + ') debe ser menor que el crítico (' + c + ').');
+        if (!T.isOrdered(r[4], w, c)) errs.push(T.orderMessage(r[4], w, c, r[1]));
       });
       if (errs.length) {
         box.innerHTML = '<div class="errors" role="alert"><ul>' + errs.map(function (x) { return '<li>' + U.esc(x) + '</li>'; }).join('') + '</ul></div>';

@@ -8,6 +8,7 @@ var net = require('net');
 var crypto = require('crypto');
 var Defaults = require('../../js/config/defaults.js');
 var Thresholds = require('../../js/shared/thresholds.js'); // reglas de umbrales compartidas con el navegador
+var Fingerprint = require('../../js/shared/fingerprint.js'); // validación de huella TLS compartida con el navegador
 
 var HOST_RE = /^(?=.{1,253}$)[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?(?:\.[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?)*$/i;
 // El primer carácter debe ser alfanumérico: así un nombre nunca se interpreta como opción (-H...) del comando.
@@ -106,10 +107,8 @@ function sanitizeTarget(input, existing, settings) {
   var fingerprint = '';
   var fpRaw = typeof ag.fingerprint === 'string' ? ag.fingerprint.trim() : '';
   if (fpRaw) {
-    var fpHex = fpRaw.replace(/:/g, '');
-    if (/^[0-9a-fA-F]{64}$/.test(fpHex) && (fpRaw.indexOf(':') < 0 || /^([0-9a-fA-F]{2}:){31}[0-9a-fA-F]{2}$/.test(fpRaw))) {
-      fingerprint = fpHex.toUpperCase().replace(/(..)(?!$)/g, '$1:');
-    } else errors.push('Huella TLS no válida (64 caracteres hexadecimales)');
+    if (Fingerprint.isValid(fpRaw)) fingerprint = Fingerprint.normalize(fpRaw);
+    else errors.push('Huella TLS no válida (64 caracteres hexadecimales)');
   }
   // Sin TLS la huella no tiene sentido: se vacía. Con TLS es obligatoria (el token solo viaja a un certificado fijado).
   if (!tls) fingerprint = '';
@@ -122,8 +121,7 @@ function sanitizeTarget(input, existing, settings) {
     // Tampoco se hereda si se desactiva TLS (true -> false): el token pasaría a viajar en claro.
     var tlsDowngrade = prevAgent.tls === true && !tls;
     // Ni si cambia la huella fijada (distinta o quitada): el secreto no debe ir a otro certificado.
-    var prevFp = String(prevAgent.fingerprint || '').replace(/:/g, '').toUpperCase();
-    var sameFp = prevFp === fingerprint.replace(/:/g, '').toUpperCase();
+    var sameFp = Fingerprint.same(prevAgent.fingerprint, fingerprint);
     if (sameDest && !tlsDowngrade && sameFp) token = prevAgent.token || '';
   }
 

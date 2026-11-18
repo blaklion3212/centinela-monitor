@@ -60,20 +60,22 @@ test('RT-08 gana la primera ruta de la tabla que coincide (importa el orden)', f
   assert.strictEqual(router([b, a]).match('GET', '/api/health').route, b);
 });
 
-test('RT-09 una ruta con método \'*\' sirve de respaldo para cualquier método', function () {
-  var esp = { method: 'DELETE', pattern: '/api/users/:id' };
-  var resp = { method: '*', pattern: '/api/users/:id' };
-  var rt = router([esp, resp]);
-  assert.strictEqual(rt.match('DELETE', '/api/users/ana').route, esp);
-  ['GET', 'POST', 'PATCH', 'HEAD', 'OPTIONS'].forEach(function (met) {
-    assert.strictEqual(rt.match(met, '/api/users/ana').route, resp, met);
-  });
+test('RT-09 un método \'*\' se rechaza al crear el enrutador, con el patrón en el mensaje', function () {
+  assert.throws(function () { router([{ method: '*', pattern: '/api/users/:id' }]); }, /\/api\/users\/:id.*"\*"/);
+  assert.throws(function () { router([{ method: 'DELETE', pattern: '/a' }, { method: '*', pattern: '/b' }]); }, /"\*"/);
 });
 
-test('RT-10 el respaldo \'*\' declarado antes tapa a las rutas posteriores', function () {
-  var resp = { method: '*', pattern: '/api/z' };
-  var esp = { method: 'GET', pattern: '/api/z' };
-  assert.strictEqual(router([resp, esp]).match('GET', '/api/z').route, resp);
+test('RT-10 mismo patrón con distinto access lanza error; con el mismo access se acepta', function () {
+  assert.throws(function () {
+    router([{ method: 'GET', pattern: '/api/z', access: 'standard' }, { method: 'PUT', pattern: '/api/z', access: 'admin' }]);
+  }, /\/api\/z.*access/);
+  assert.doesNotThrow(function () {
+    router([{ method: 'GET', pattern: '/api/z', access: 'admin' }, { method: 'PUT', pattern: '/api/z', access: 'admin' }]);
+  });
+  // Patrones distintos pueden tener access distinto.
+  assert.doesNotThrow(function () {
+    router([{ method: 'GET', pattern: '/api/a', access: 'public' }, { method: 'GET', pattern: '/api/b', access: 'admin' }]);
+  });
 });
 
 test('RT-11 el método se compara con distinción de mayúsculas', function () {
@@ -81,13 +83,30 @@ test('RT-11 el método se compara con distinción de mayúsculas', function () {
   assert.strictEqual(rt.match('get', '/a'), null);
 });
 
-test('RT-12 HEAD y OPTIONS solo coinciden si están declarados o hay respaldo \'*\'', function () {
-  var sin = router([{ method: 'GET', pattern: '/a' }]);
-  assert.strictEqual(sin.match('HEAD', '/a'), null);
+test('RT-12 HEAD se trata como GET; OPTIONS solo coincide si está declarado', function () {
+  var get = { method: 'GET', pattern: '/a' };
+  var sin = router([get]);
+  assert.strictEqual(sin.match('HEAD', '/a').route, get, 'HEAD devuelve la ruta GET');
   assert.strictEqual(sin.match('OPTIONS', '/a'), null);
-  var con = router([{ method: 'HEAD', pattern: '/a' }, { method: 'OPTIONS', pattern: '/a' }]);
-  assert.strictEqual(con.match('HEAD', '/a').route.method, 'HEAD');
+  assert.strictEqual(router([{ method: 'POST', pattern: '/a' }]).match('HEAD', '/a'), null, 'sin GET no hay HEAD');
+  var con = router([{ method: 'OPTIONS', pattern: '/a' }]);
   assert.strictEqual(con.match('OPTIONS', '/a').route.method, 'OPTIONS');
+});
+
+test('RT-12b noHead excluye a HEAD; una ruta HEAD explícita tiene prioridad sobre el GET', function () {
+  var sse = { method: 'GET', pattern: '/s', noHead: true };
+  assert.strictEqual(router([sse]).match('HEAD', '/s'), null);
+  assert.strictEqual(router([sse]).match('GET', '/s').route, sse);
+  var get = { method: 'GET', pattern: '/a' }, head = { method: 'HEAD', pattern: '/a' };
+  assert.strictEqual(router([head, get]).match('HEAD', '/a').route, head);
+  assert.strictEqual(router([head]).match('GET', '/a'), null, 'HEAD declarado no sirve a GET');
+});
+
+// Requisito QA4: una ruta HEAD declarada explícitamente tiene prioridad sobre el GET, sin importar el orden de la tabla.
+// Hoy gana la primera de la tabla (server/lib/routes.js:56-57, `serves`): con [GET, HEAD] se devuelve GET.
+test('RT-12c HEAD explícita gana al GET aunque se declare después', function () {
+  var get = { method: 'GET', pattern: '/a' }, head = { method: 'HEAD', pattern: '/a' };
+  assert.strictEqual(router([get, head]).match('HEAD', '/a').route, head);
 });
 
 test('RT-13 no hay coincidencias parciales: ni prefijos ni sufijos', function () {
@@ -177,15 +196,29 @@ test('RT-24 un ":" que no inicia un nombre válido se trata como literal', funct
   assert.deepStrictEqual(rt.match('GET', '/hora/12:30').params, {});
 });
 
-test('RT-25 patrón de producción: ID_TARGET con respaldo \'*\' tras las rutas específicas', function () {
+test('RT-25 patrón de producción: ID_TARGET con rutas específicas y sin comodín', function () {
   var ID = '[A-Za-z0-9_-]{1,64}';
-  var tabla = [
+  var rt = router([
     { method: 'PUT', pattern: '/api/targets/:id', params: { id: ID }, k: 'put' },
-    { method: '*', pattern: '/api/targets/:id', params: { id: ID }, k: 'resto' }
-  ];
-  var rt = router(tabla);
+    { method: 'DELETE', pattern: '/api/targets/:id', params: { id: ID }, k: 'del' }
+  ]);
   assert.strictEqual(rt.match('PUT', '/api/targets/t-1').route.k, 'put');
-  assert.strictEqual(rt.match('GET', '/api/targets/t-1').route.k, 'resto');
-  assert.strictEqual(rt.match('GET', '/api/targets/' + new Array(66).join('a')), null, 'id de 65 caracteres');
-  assert.strictEqual(rt.match('GET', '/api/targets/a b'), null);
+  assert.strictEqual(rt.match('GET', '/api/targets/t-1'), null);
+  assert.deepStrictEqual(rt.allowed('/api/targets/t-1').methods, ['PUT', 'DELETE']);
+  assert.strictEqual(rt.allowed('/api/targets/' + new Array(66).join('a')), null, 'id de 65 caracteres');
+  assert.strictEqual(rt.allowed('/api/targets/a b'), null);
+});
+
+test('RT-26 allowed: HEAD justo después de GET, sin duplicados, y noHead lo excluye', function () {
+  var rt = router([
+    { method: 'GET', pattern: '/x' }, { method: 'PUT', pattern: '/x' },
+    { method: 'GET', pattern: '/s', noHead: true }, { method: 'POST', pattern: '/s' },
+    { method: 'GET', pattern: '/d' }, { method: 'HEAD', pattern: '/d' },
+    { method: 'POST', pattern: '/p' }
+  ]);
+  assert.deepStrictEqual(rt.allowed('/x').methods, ['GET', 'HEAD', 'PUT']);
+  assert.deepStrictEqual(rt.allowed('/s').methods, ['GET', 'POST']);
+  assert.deepStrictEqual(rt.allowed('/d').methods.slice().sort(), ['GET', 'HEAD'], 'HEAD declarado y derivado no se duplican');
+  assert.strictEqual(rt.allowed('/d').methods.length, 2);
+  assert.deepStrictEqual(rt.allowed('/p').methods, ['POST'], 'sin GET no hay HEAD');
 });

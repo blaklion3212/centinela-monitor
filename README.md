@@ -74,7 +74,7 @@ Arrastra el título para mover, el borde/esquina para redimensionar, ↗ para am
 Crea `js/widgets/mi-widget.js` con `NOC.widgets.register({ type, title, icon, desc, render(ctx) {...} })` y añade el `<script>` en `index.html`.
 
 ## Pruebas
-`npm test` (334 pruebas, sin dependencias). La integración continua (GitHub Actions, `.github/workflows/pruebas.yml`) ejecuta la suite con Node 18, 20, 22 y 24 y construye la imagen del contenedor en cada push y pull request a `main`.
+`npm test` (399 pruebas, sin dependencias). La integración continua (GitHub Actions, `.github/workflows/pruebas.yml`) ejecuta la suite con Node 18, 20, 22 y 24 y construye la imagen del contenedor en cada push y pull request a `main`.
 
 ## Documentación
 - [Bitácora del proyecto](docs/BITACORA.md)

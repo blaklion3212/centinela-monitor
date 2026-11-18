@@ -67,6 +67,22 @@ Revisión sobre el manual 2.0.0, con la versión `2.1.0` en los metadatos y en l
 
 Las figuras no cambian de número ni de posición; las imágenes de las Figuras 12, 14 y 15 las sustituye otro encargo.
 
+## Revisión 2.2.0 (fase 4)
+
+Revisión sobre el manual 2.1.0, con la versión `2.2.0` en los metadatos y en los ejemplos de arranque (propuesta pendiente de aprobación formal). Fecha: 18 de noviembre de 2026. Fuente de verdad: el código (archivo entre paréntesis).
+
+| Sección | Qué cambió | Por qué (fuente) |
+|---|---|---|
+| Portada y ejemplos (2.2, 9.1) | Versión `2.2.0`; ejemplos “Centinela 2.2.0 →”. | Propuesta del orquestador. |
+| 3.5 Mediciones (Ping) | Una muestra que no es un número finito (ausente, NaN, Infinity) cuenta como pérdida; la pérdida se redondea a 1 decimal; panel y servidor usan el mismo módulo. | `js/shared/stats.js`. |
+| 6.2 Formulario (huella) y 6.3 | La huella admite 64 hexadecimales con “:” solo entre pares completos; formulario y servidor aplican el mismo formato. | `js/shared/fingerprint.js`, `js/views/targets.js`, `server/lib/validate.js`. |
+| 8.2 Umbrales | Viñeta nueva con el mensaje de orden aviso/crítico (etiqueta con unidad en el formulario; sin unidad en la API; variante SSL con “se avisa con más días de margen”). | `js/shared/thresholds.js` (`orderMessage`), `js/views/settings.js`. |
+| 13.3 API REST | Subsección nueva “Códigos para rutas y métodos”: 405 con `Allow`, 404, HEAD como GET (excepto `/api/stream`) y orden de comprobaciones (401, 403 en `/api/users*`, 403 de solo lectura en ruta inexistente). | `server/lib/routes.js`, `server/server.js` (`ROUTES`, `api()`). |
+| 16 Solución de problemas | Fila nueva de 405; la de Ajustes cita el mensaje de orden. | Código citado arriba. |
+| Anexo D | Filas nuevas: 405, 404, 405 de HEAD en `/api/stream`, 401, 403 de administrador, 403 de solo lectura y mensaje de orden de umbrales. Se aclara que antes muchos métodos no declarados daban 404 o 403. | `server/server.js` (`api()`). |
+
+Los cambios de la fase 4 no alteran figuras ni capturas. La suite pasó a más de 380 pruebas (número final: lo fija el orquestador).
+
 ## Secciones sin cambios de contenido
 
 Capítulos 3 (excepto 3.2 y 3.5), 5, 7, 10 (excepto los dos puntos indicados), 15 (excepto 15.10), Anexos A y B y el resto de las secciones 2, 6 y 8 se transcribieron del PDF. Solo hubo adaptaciones de formato: las celdas con una barra vertical se reescribieron con “o”, la nota “Cuidado” del capítulo 11 pasó a `> **Importante:**` (el generador solo admite Nota, Importante y Consejo) y las tablas de clave-valor del catálogo llevan una fila de cabecera (“Aspecto | Detalle”).

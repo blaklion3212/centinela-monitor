@@ -529,3 +529,70 @@ Resultado de las comprobaciones:
   - Prueba de la huella en el formulario, si se extrae a una función pura.
   - Primera ejecución real de la CI cuando exista el remoto.
 - **Versión 2.1.0 aprobada por el usuario.** Commit y etiqueta local `v2.1.0`, sin remoto.
+
+---
+
+## 2026-11-18 · Fase 4: backlog restante y publicación en GitHub
+
+**Petición del usuario:** completar los pendientes del backlog y subir el repositorio a GitHub.
+
+**Decisión del usuario:** repositorio **privado** `blaklion3212/centinela-monitor`, creado con `gh`. Se suben la rama `main` y las etiquetas; `data/` y `.env` quedan fuera.
+
+**Plan**
+
+| Fase | Responsable | Alcance |
+|---|---|---|
+| B-A | implementador | Respuesta 405 coherente (con `Allow`) en toda la API |
+| B-B | implementador | Módulos compartidos: `js/shared/stats.js`, `js/shared/fingerprint.js` y mensajes de umbrales unificados |
+| Pruebas | probador | Pruebas nuevas, entre ellas la de la huella en el cliente, ahora que es una función pura |
+| Revisión | revisor-qa | Revisión de la fase |
+| Cierre | orquestador | Documentación, PDF, versión, commit, etiqueta y push |
+
+**Estado:** B-A y B-B en curso.
+
+**B-A ✅** 405 `{error:'Método no permitido'}` con `Allow` en rutas existentes. Se quitaron las entradas `'*'` de `ROUTES` y se añadió `routes.allowed()`.
+- **Orden de comprobaciones:** 415 → 403 Origin → pública → 401 → 403 mustChange → 403 admin en users → 405 → 404.
+- **Decisiones del orquestador:**
+  - Un no admin recibe 403 en `/api/users*`, para no revelar los métodos que existen.
+  - Un anónimo siempre recibe 401.
+
+**B-B ✅** `js/shared/stats.js` (`NOC.Stats`) y `js/shared/fingerprint.js` (`NOC.Fingerprint`), compartidos por el cliente y el servidor. El cliente usa `orderMessage`.
+- **Cambios observables:**
+  - Con `NaN` o `Infinity`, el servidor cuenta pérdida.
+  - El cliente valida la huella con el mismo formato estricto que el servidor.
+  - El mensaje de orden de umbrales es el mismo en el cliente y en la API.
+
+**Pruebas ✅** 388/388 (54 nuevas): `api-405`, `shared-stats`, `shared-fingerprint` y `settings-orden`. Esta última cubre por fin la huella y el mensaje del cliente.
+
+**revisor-qa: APTO**, con 5 observaciones bajas (QA4-1 a QA4-5).
+- Se corrigen todas.
+- **Decisiones del orquestador:**
+  - HEAD se trata como GET (RFC 9110).
+  - El mensaje de orden usa la etiqueta con unidades del formulario.
+
+**Corrección QA4 ✅**
+- QA4-1: pérdida calculada con enteros (23 de 80 da 28,8).
+- QA4-2: HEAD equivale a GET, salvo `/api/stream`, que tiene `noHead` y responde 405 con `Allow: GET`.
+- QA4-3: `orderMessage` admite una etiqueta, para mostrar las unidades en la vista.
+- QA4-4: `checks.js` usa `Fingerprint`.
+- QA4-5: `createRouter` rechaza el método `'*'` y un mismo patrón con distinto `access`.
+
+**Pruebas ✅ 399/399**
+- Las 16 pruebas con expectativa obsoleta se ajustaron y se añadieron casos nuevos.
+- La prueba RT-12c destapó que una ruta HEAD explícita declarada después de su GET no ganaba. El orquestador lo corrigió en `routes.match`, que ahora busca primero el método exacto.
+
+**Documentación ✅**
+- Manual 2.2.0: sección 13.3 nueva sobre códigos de rutas y métodos, y 7 filas nuevas en el Anexo D.
+- `CAMBIOS-MANUAL.md` y README actualizados (399 pruebas).
+- PDF regenerado: 73 páginas.
+
+**Versión 2.2.0 aprobada por el usuario.** Commit, etiqueta `v2.2.0` y push al repositorio privado `blaklion3212/centinela-monitor`.
+
+**Cierre de la fase 4**
+- Checklist de terminado:
+  - Backlog completado.
+  - 399/399 pruebas.
+  - QA apto; las observaciones bajas están corregidas.
+  - Documentación y PDF al día.
+  - Sin secretos.
+- **Backlog restante:** ninguno técnico. Solo queda la primera ejecución real de la CI, que llegará con el push a GitHub.

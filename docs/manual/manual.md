@@ -1,7 +1,7 @@
 ---
 title: Manual de usuario y configuración
 subtitle: Dashboard modular de monitoreo de IPs y URLs, estilo PingPlotter / Zabbix
-version: 2.1.0
+version: 2.2.0
 date: 18 de noviembre de 2026
 ---
 
@@ -55,7 +55,7 @@ El sistema tiene tres piezas. Entender para qué sirve cada una evita la confusi
 
 1. Descomprime el proyecto (carpeta `centinela-monitor`) en el servidor que hará las mediciones.
 2. Abre una terminal en esa carpeta y ejecuta: `node server/server.js` (también sirve `npm start`).
-3. La terminal muestra la dirección, por ejemplo `Centinela 2.1.0 → http://127.0.0.1:8080`, el número de usuarios, la carpeta de datos usada y, solo en el primer arranque, el usuario inicial con su contraseña (sección 9.1).
+3. La terminal muestra la dirección, por ejemplo `Centinela 2.2.0 → http://127.0.0.1:8080`, el número de usuarios, la carpeta de datos usada y, solo en el primer arranque, el usuario inicial con su contraseña (sección 9.1).
 4. Abre esa dirección en el navegador e inicia sesión con el usuario `administrador` y la contraseña inicial (sección 9.1). Si la contraseña era la aleatoria del registro, el panel te pedirá cambiarla antes de continuar. La insignia de arriba debe decir En vivo.
 5. Ve a Objetivos y agrega tus IPs y URLs (capítulo 6). En el primer arranque el sistema crea data/ con objetivos de ejemplo (DNS Google, DNS Cloudflare, Google, Wikipedia, Sitio de ejemplo y el servidor local); puedes borrarlos.
 
@@ -140,7 +140,7 @@ Cada métrica tiene dos valores en Ajustes: Degradado (aviso) y Crítico. Son gl
 | Verificación | Cómo funciona | Detalles |
 |---|---|---|
 | Nombre (DNS) | Resuelve el nombre del host. Para una IP consulta el nombre inverso (PTR). | Tiempo de espera 3 s. En URLs muestra la IP resuelta, y la medición usa esa misma IP. |
-| Ping | Envía 4 paquetes ICMP con el comando del sistema y calcula mínimo, promedio, máximo, pérdida, jitter y TTL. | Espera 2 s por paquete. Jitter = promedio de la diferencia entre respuestas consecutivas del ciclo. TTL = el de la primera respuesta. |
+| Ping | Envía 4 paquetes ICMP con el comando del sistema y calcula mínimo, promedio, máximo, pérdida, jitter y TTL. | Espera 2 s por paquete. Jitter = promedio de la diferencia entre respuestas consecutivas del ciclo. TTL = el de la primera respuesta. Una muestra solo cuenta como recibida si es un número finito: una ausente, NaN o Infinity cuenta como pérdida. El porcentaje de pérdida se redondea a 1 decimal. El panel y el servidor lo calculan con el mismo módulo, así que muestran el mismo valor. |
 | Puertos | Intenta una conexión TCP a cada puerto y mide el tiempo. | Espera 3 s. Abierto = la conexión se establece. |
 | HTTP/HTTPS | Pide la URL (GET o HEAD), sigue hasta 10 redirecciones (también a otro dominio, con sus cookies), mide TTFB y tiempo total, y revisa el código. | Tiempo máximo configurable. Con GET puede leer hasta 256 KB para buscar el texto esperado. Si el plazo vence con la respuesta a medias, se informa tiempo agotado. Identifica al monitor como Centinela-Monitor (sin número de versión). |
 | SSL/TLS | Lee el certificado del servidor: vigencia, emisor, protocolo y si la cadena es confiable. | No rechaza certificados inválidos (para poder reportarlos). Solo URLs https, o puerto 443 de un host. |
@@ -288,7 +288,7 @@ El cuadro Buscar filtra por nombre, dirección, grupo o etiqueta mientras escrib
 | Medir CPU, RAM, disco, I/O wait, ancho de banda y servicios | Activa la consulta de métricas internas del servidor. | Desmarcado por defecto. | En servidores que administras. En el mismo equipo del panel (127.0.0.1) no requiere instalar nada; en servidores remotos sí (capítulo 11). |
 | Puerto del agente | Puerto donde escucha el agente de ese servidor. | 1–65535. Por defecto 9100. | Cámbialo si el 9100 ya está en uso; debe coincidir con --port del agente. |
 | Conexión cifrada (TLS) | Consulta al agente por HTTPS en lugar de HTTP. El token y las métricas viajan cifrados. | Desmarcado por defecto. Solo funciona si el agente se arrancó con --tls-cert y --tls-key (sección 11.4). | Actívala para agentes fuera de tu red de gestión o en redes que no controlas del todo. Al marcarla aparece el campo de la huella, que es obligatoria. |
-| Huella SHA-256 del certificado | Identifica el certificado del agente. El panel solo envía el token si el certificado que presenta el agente tiene exactamente esta huella; así un servidor falso no recibe el secreto. | Obligatoria con TLS. 64 caracteres hexadecimales, con o sin “:” (por ejemplo AA:BB:…). Se guarda con “:” y en mayúsculas. Sin TLS se descarta. | Cópiala de lo que imprime el agente al arrancar (“Huella SHA-256 del certificado (cópiala al dashboard)”). Si renuevas el certificado del agente, la huella cambia: actualízala aquí. |
+| Huella SHA-256 del certificado | Identifica el certificado del agente. El panel solo envía el token si el certificado que presenta el agente tiene exactamente esta huella; así un servidor falso no recibe el secreto. | Obligatoria con TLS. 64 caracteres hexadecimales, sin separadores o con “:” solo entre pares completos (AA:BB:…:FF; no se admiten otros separadores ni “:” sueltos). El formulario y el servidor aplican exactamente el mismo formato. Se guarda con “:” y en mayúsculas. Sin TLS se descarta. | Cópiala de lo que imprime el agente al arrancar (“Huella SHA-256 del certificado (cópiala al dashboard)”). Si renuevas el certificado del agente, la huella cambia: actualízala aquí. |
 | Token del agente | Contraseña compartida con el agente (se envía como Authorization: Bearer). | Hasta 200 caracteres. Opcional solo en 127.0.0.1. Nunca se muestra de nuevo: al editar, dejarlo vacío conserva el guardado. | Obligatorio en servidores remotos. Usa una cadena larga y distinta por servidor. Si cambias la dirección del objetivo (incluso solo la ruta de una URL), el puerto del agente o la huella, o desactivas TLS, el token guardado se descarta para no enviarlo a otro destino: el formulario te lo avisa y debes escribirlo de nuevo. |
 | Servicios a vigilar | Servicios o procesos que deben estar encendidos; si uno está detenido el objetivo pasa a DOWN. | Hasta 20, separados por coma. Cada nombre: debe empezar con letra o número y puede contener letras, números y . _ @ : - (máx. 64). | Nombre del servicio en el sistema: nginx, apache2, httpd, docker, sshd, mysqld, postgresql, tomcat, cups (spooler de impresión) o el nombre en Windows (Spooler, W3SVC). |
 
@@ -308,7 +308,7 @@ El cuadro Buscar filtra por nombre, dirección, grupo o etiqueta mientras escrib
 | Códigos HTTP esperados no válidos | Formato incorrecto. | Usa 200-399, 200,401 o mezclas. |
 | Nombre de servicio no válido | Un servicio tiene espacios, otros símbolos o empieza con un carácter que no es letra ni número. | Usa solo el nombre del servicio, separado por comas. |
 | Con TLS activado, la huella SHA-256 del certificado del agente es obligatoria | Marcaste “Conexión cifrada (TLS)” y dejaste la huella vacía. | Pega la huella que imprime el agente al arrancar, o desmarca TLS. |
-| Huella TLS no válida (64 caracteres hexadecimales) | La huella no tiene 64 caracteres hexadecimales (con o sin “:” entre pares). | Cópiala completa de la salida del agente. |
+| Huella TLS no válida (64 caracteres hexadecimales) | La huella no tiene 64 caracteres hexadecimales, o lleva “:” fuera de su sitio (solo se admite entre pares: AA:BB:…). El formulario y el servidor usan la misma regla. | Cópiala completa de la salida del agente. |
 
 ## 6.4 Importar y exportar
 
@@ -425,6 +425,7 @@ Cada fila tiene dos valores: Degradado (aviso, color ámbar) y Crítico (rojo). 
 Reglas que aplica Ajustes al guardar (el formulario y el servidor las comprueban y muestran la lista de errores):
 
 - El aviso debe ser menor que el crítico en cada métrica. En SSL es al revés: como se miden días restantes, el aviso debe ser mayor que el crítico (por ejemplo 30 / 7).
+- Si el orden no se cumple, el mensaje nombra la métrica y los dos valores. En el formulario lleva la etiqueta con su unidad, por ejemplo `En "Latencia (ms)" el aviso (500) debe ser menor que el crítico (400).`; en SSL: `En "SSL: días restantes (menor = peor)" el aviso (7) debe ser mayor que el crítico (30): se avisa con más días de margen.` La API usa el mismo formato con el nombre de la métrica sin unidad (por ejemplo `En "Latencia" el aviso (500) debe ser menor que el crítico (400).`).
 - Un campo vacío no se interpreta como 0: se omite y se conserva el valor anterior. Esto vale también para el intervalo por defecto y los puntos de historial.
 - Los avisos de latencia, pérdida, jitter, TTFB, disco, CPU, RAM e I/O wait no pueden ser 0: un aviso en 0 dispararía alertas permanentes, y el servidor lo rechaza con el mensaje “debe ser mayor que 0”.
 - Un valor no numérico o fuera de 0 a 1 000 000 se rechaza con un mensaje que nombra el umbral con su nombre en español (por ejemplo “Pérdida de paquetes (aviso)” o “SSL: días restantes (crítico)”). El intervalo y los puntos de historial, en cambio, se ajustan al límite permitido.
@@ -454,7 +455,7 @@ La primera vez que arranca el servidor (cuando no existe data/users.json) crea u
 En el registro de arranque (la consola con `node server/server.js`; en contenedor, `docker logs centinela` o `podman logs centinela`) la contraseña generada aparece así:
 
 ```
-Centinela 2.1.0 → http://127.0.0.1:8080
+Centinela 2.2.0 → http://127.0.0.1:8080
 Acceso: inicio de sesión activado (1 usuario(s))
 Usuario inicial creado: administrador (deberá cambiar la contraseña al entrar)
 ============================================================
@@ -917,7 +918,7 @@ El propio panel usa esta API, y puedes usarla para integrarte con otros sistemas
 
 | Método y ruta | Descripción |
 |---|---|
-| GET /api/health | Comprobación de vida pública: responde ok, el modo (live) y si exige inicio de sesión (auth). No incluye la versión. El resto de rutas devuelve 401 sin sesión y 403 si el rol no basta (los Lectores no pueden escribir). Si la cuenta debe cambiar la contraseña, devuelve 403 con mustChange: true salvo en las rutas de sesión. |
+| GET /api/health | Comprobación de vida pública: responde ok, el modo (live) y si exige inicio de sesión (auth). No incluye la versión. El resto de rutas devuelve 401 sin sesión y 403 si el rol no basta (los Lectores no pueden escribir; consulta “Códigos para rutas y métodos” más abajo). Si la cuenta debe cambiar la contraseña, devuelve 403 con mustChange: true salvo en las rutas de sesión. |
 | GET /api/state?org={id} | Instantánea de una organización: objetivos, ajustes, últimos resultados e historial; además la lista de organizaciones, el estado compacto de todos los objetivos y los eventos globales. Sin org = Host. |
 | POST /api/auth/login, /api/auth/logout | Iniciar y cerrar sesión (cookie). Login: {"username","password"}; responde 401 si es incorrecto y 429 al bloquearse (5 fallos de usuario+IP, más de 20 por IP en 10 minutos, o servidor ocupado). |
 | GET /api/auth/me, POST /api/auth/password | Usuario actual (con mustChange) y, solo para administradores, datos del servidor / cambio de la contraseña propia ({"current","next"}); responde 429 y cierra la sesión tras 5 fallos de la contraseña actual. |
@@ -932,6 +933,16 @@ El propio panel usa esta API, y puedes usarla para integrarte con otros sistemas
 | POST /api/traceroute | Traceroute. Cuerpo: {"targetId":"…"} o {"address":"host"} (los Lectores solo con targetId). Responde 429 si ya tienes uno en curso o hay 3 en total. |
 | GET, PUT /api/settings | Leer o guardar ajustes y umbrales. Si hay valores no válidos (fuera de rango, aviso mayor o igual que el crítico, avisos en 0), responde 400 con la lista errors. |
 | GET, PUT /api/layout?org={id} | Leer o guardar la disposición del Panel de una organización. |
+
+### Códigos para rutas y métodos
+
+- **405:** si la ruta existe pero no admite el método usado (por ejemplo `DELETE /api/settings`), responde 405 con el cuerpo `{"error":"Método no permitido"}` y la cabecera `Allow` con los métodos que sí admite (por ejemplo `Allow: GET, HEAD, PUT`). Vale para todos los roles. Antes de esta versión, muchos de esos casos devolvían 404 o 403.
+- **404:** una ruta que no existe responde 404 (`Ruta no encontrada`).
+- **HEAD** equivale a GET en la API: responde 200 sin cuerpo y aparece en `Allow` justo después de GET. Excepción: `/api/stream`, donde HEAD responde 405 con `Allow: GET`.
+- **Orden de las comprobaciones** (la primera que falla es la que responde): 415 (Content-Type), 403 de origen no permitido, rutas públicas, 401 sin sesión, 403 de cambio de contraseña pendiente, 403 de administrador en `/api/users*`, 405 y, por último, 404. Consecuencias:
+  - Un anónimo siempre recibe 401: no averigua qué rutas ni métodos existen.
+  - Un usuario que no es administrador recibe 403 en cualquier método de `/api/users*`, incluso uno no admitido.
+  - Un Lector que escribe en una ruta inexistente recibe 403 “Tu usuario es de solo lectura”. En una ruta que existe pero no admite ese método recibe 405, no 403.
 
 Además, el servidor responde 421 si el encabezado Host no está permitido (CENTINELA_ALLOWED_HOSTS) y 413 si el cuerpo supera 512 KB.
 
@@ -1169,7 +1180,8 @@ Cada receta indica cómo dar de alta el objetivo y qué ventanas conviene tener 
 | Un usuario a quien obligué a cambiar la contraseña ve la ventana “Debes cambiar tu contraseña” con el panel ya abierto | Comportamiento esperado: el servidor le rechaza las peticiones (403) hasta que la cambie. | Debe escribir su contraseña actual y una nueva (sección 9.3). |
 | El agente responde 429 (“demasiados intentos fallidos, espera un minuto”) | Hubo más de 10 peticiones con token incorrecto en un minuto desde esa IP. | Corrige el token del objetivo y espera un minuto. |
 | El agente no arranca: “exige --token (o CENTINELA_AGENT_TOKEN)” | Escucha fuera de 127.0.0.1 sin token. | Define CENTINELA_AGENT_TOKEN antes de ejecutarlo. |
-| Los ajustes no se guardan y aparece una lista de errores | Un aviso es mayor o igual que el crítico (en SSL, menor o igual), hay un aviso en 0 o un valor fuera de rango. | Corrige los valores que indica la lista (sección 8.2). Un campo vacío no es un error: conserva el valor anterior. |
+| Mi herramienta recibe 405 “Método no permitido” de la API | La ruta existe pero no admite ese método (antes podía verse como 404 o 403). | Mira la cabecera Allow de la respuesta y usa uno de esos métodos (sección 13.3). Una ruta que no existe responde 404. |
+| Los ajustes no se guardan y aparece una lista de errores (por ejemplo `En "Latencia (ms)" el aviso (x) debe ser menor que el crítico (y).`) | Un aviso es mayor o igual que el crítico (en SSL, menor o igual), hay un aviso en 0 o un valor fuera de rango. | Corrige los valores que indica la lista (sección 8.2). Un campo vacío no es un error: conserva el valor anterior. |
 | Las ventanas de CPU/Disco/Servicios dicen “No hay objetivos compatibles” | Ningún objetivo tiene el agente activo. | Activa “Salud del servidor” en un objetivo (127.0.0.1 no necesita instalar nada). |
 | Una ventana dice “Esperando la primera medición” | Aún no termina el primer ciclo. | Espera un intervalo o usa “verificar ahora” en Estado de servicios. |
 | Sin I/O wait ni ancho de banda | El servidor remoto es Windows o macOS. | Es una limitación: solo Linux entrega esas métricas. |
@@ -1299,5 +1311,12 @@ La cuadrícula tiene 12 columnas; cada fila mide 34 px y el espacio entre ventan
 | 403 con mustChange | Cualquier ruta, mientras la contraseña deba cambiarse | 9.1 |
 | 421 “Host no permitido” | Cabecera Host fuera de CENTINELA_ALLOWED_HOSTS | 12 |
 | 415 Content-Type | POST, PUT o DELETE sin application/json | 13.3 |
+| 405 “Método no permitido” (con cabecera Allow) | Ruta de la API que existe, usada con un método que no admite (antes, muchos casos daban 404 o 403) | 13.3 |
+| 404 “Ruta no encontrada” | Ruta de la API que no existe | 13.3 |
+| 405 con “Allow: GET” | HEAD sobre /api/stream (en el resto de rutas GET, HEAD responde 200 sin cuerpo) | 13.3 |
+| 401 “Inicia sesión para continuar” | Cualquier ruta de la API sin sesión, exista o no el método (se comprueba antes que 403, 405 y 404) | 13.3 |
+| 403 “Solo un administrador puede gestionar usuarios” | /api/users* con un rol que no es administrador, con cualquier método | 9.2, 13.3 |
+| 403 “Tu usuario es de solo lectura” | Un Lector que escribe en una ruta inexistente o en una de sus rutas de escritura | 9.2, 13.3 |
+| `En "Latencia (ms)" el aviso (x) debe ser menor que el crítico (y).` | Guardar Ajustes con el aviso mayor o igual que el crítico; en SSL: “…mayor que el crítico (y): se avisa con más días de margen.” | 8.2 |
 | “CENTINELA_TRUST_PROXY: entrada ignorada (no es una IP)” | Consola del servidor al arrancar | 12.1 |
 | “[scheduler] verificación huérfana: …” | Consola del servidor | 3.5 |

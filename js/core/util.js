@@ -77,17 +77,6 @@
   };
   F.plural = function (n, one, many) { return n + ' ' + (n === 1 ? one : many); };
 
-  U.stats = function (samples) {
-    var ok = samples.filter(U.isNum), sent = samples.length;
-    var out = { sent: sent, received: ok.length, lossPct: sent ? Math.round((sent - ok.length) / sent * 1000) / 10 : 0,
-                min: null, avg: null, max: null, jitter: null };
-    if (!ok.length) return out;
-    var sum = 0, mn = Infinity, mx = -Infinity;
-    ok.forEach(function (v) { sum += v; if (v < mn) mn = v; if (v > mx) mx = v; });
-    out.min = Math.round(mn * 100) / 100; out.max = Math.round(mx * 100) / 100; out.avg = Math.round(sum / ok.length * 100) / 100;
-    var d = 0;
-    for (var i = 1; i < ok.length; i++) d += Math.abs(ok[i] - ok[i - 1]);
-    out.jitter = ok.length > 1 ? Math.round(d / (ok.length - 1) * 100) / 100 : 0;
-    return out;
-  };
+  // Estadísticas de una serie: lógica única en js/shared/stats.js (NOC.Stats), compartida con el servidor.
+  U.stats = function (samples) { return NOC.Stats.stats(samples); };
 })(window.NOC = window.NOC || {});

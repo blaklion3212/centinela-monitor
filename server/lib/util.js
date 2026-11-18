@@ -31,26 +31,9 @@ function friendlyError(e) {
   return String(e.message || c || 'error').slice(0, 120);
 }
 
-function round(v, d) {
-  var m = Math.pow(10, d == null ? 1 : d);
-  return Math.round(v * m) / m;
-}
-
-function stats(samples) {
-  var ok = samples.filter(function (v) { return typeof v === 'number'; });
-  var sent = samples.length, received = ok.length;
-  var out = { sent: sent, received: received, lossPct: sent ? round((sent - received) / sent * 100, 1) : 0,
-              min: null, avg: null, max: null, jitter: null };
-  if (!received) return out;
-  var sum = 0, min = Infinity, max = -Infinity;
-  ok.forEach(function (v) { sum += v; if (v < min) min = v; if (v > max) max = v; });
-  out.min = round(min, 2); out.max = round(max, 2); out.avg = round(sum / received, 2);
-  if (received > 1) {
-    var d = 0;
-    for (var i = 1; i < ok.length; i++) d += Math.abs(ok[i] - ok[i - 1]);
-    out.jitter = round(d / (ok.length - 1), 2);
-  } else out.jitter = 0;
-  return out;
-}
+// Estadísticas y redondeo: lógica única en js/shared/stats.js, compartida con el navegador (NOC.Stats).
+var Stats = require('../../js/shared/stats.js');
+var round = Stats.round;
+var stats = Stats.stats;
 
 module.exports = { withTimeout: withTimeout, friendlyError: friendlyError, round: round, stats: stats };

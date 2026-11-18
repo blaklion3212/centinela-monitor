@@ -100,8 +100,8 @@
         if (t && t.checks && t.checks.agent && t.checks.agent.hasToken) {
           var warn = rootEl.querySelector('[data-token-warn]'), addr0 = String(t.address || ''), port0 = String(t.checks.agent.port || 9100), tls0 = !!t.checks.agent.tls;
           // Huella comparada normalizada: sin ':' y en mayúsculas.
-          var nfp = function (s) { return String(s || '').replace(/:/g, '').trim().toUpperCase(); }, fp0 = nfp(t.checks.agent.fingerprint);
-          var chk = function () { warn.hidden = !(nfp(rootEl.querySelector('#f-agfp').value) !== fp0 || rootEl.querySelector('#f-addr').value.trim() !== addr0 || rootEl.querySelector('#f-agport').value.trim() !== port0 || (tls0 && !rootEl.querySelector('#f-agtls').checked)); };
+          var FP = NOC.Fingerprint, fp0 = t.checks.agent.fingerprint;
+          var chk = function () { warn.hidden = !(!FP.same(rootEl.querySelector('#f-agfp').value, fp0) || rootEl.querySelector('#f-addr').value.trim() !== addr0 || rootEl.querySelector('#f-agport').value.trim() !== port0 || (tls0 && !rootEl.querySelector('#f-agtls').checked)); };
           rootEl.querySelector('#f-addr').addEventListener('input', chk);
           rootEl.querySelector('#f-agport').addEventListener('input', chk);
           rootEl.querySelector('#f-agtls').addEventListener('change', chk);
@@ -123,7 +123,7 @@
         agent: { enabled: chk('#f-ag'), port: val('#f-agport'), token: val('#f-agtoken'), tls: chk('#f-agtls'), fingerprint: chk('#f-agtls') ? val('#f-agfp').trim() : '', services: val('#f-svc') } }
     };
     // Validación en cliente: con TLS la huella es obligatoria (64 hex, con o sin ':').
-    if (payload.checks.agent.enabled && payload.checks.agent.tls && !/^[0-9a-fA-F]{64}$/.test(payload.checks.agent.fingerprint.replace(/:/g, ''))) {
+    if (payload.checks.agent.enabled && payload.checks.agent.tls && !NOC.Fingerprint.isValid(payload.checks.agent.fingerprint)) {
       var eb = rootEl.querySelector('[data-errors]');
       eb.innerHTML = '<div class="errors" role="alert"><ul><li>Con TLS activado, la huella SHA-256 del certificado es obligatoria: 64 caracteres hexadecimales, con o sin “:”.</li></ul></div>';
       rootEl.querySelector('.modal__body').scrollTop = 0;

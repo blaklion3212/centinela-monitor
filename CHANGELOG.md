@@ -5,6 +5,26 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). V
 
 ## [Sin publicar]
 
+## [2.2.0] - 2026-11-18
+
+### Agregado
+- La API responde `HEAD` en todas sus rutas de lectura (como `GET`, sin cuerpo), excepto el flujo en vivo `/api/stream`.
+- Pruebas automáticas del panel para el formulario de ajustes y la validación de la huella TLS: 399 en total.
+
+### Cambiado
+- **Códigos de respuesta de la API:** cuando la ruta existe pero el método no está permitido, responde **405** «Método no permitido» con la cabecera `Allow`.
+  - Antes muchas de esas peticiones devolvían 404 «Ruta no encontrada», «Organización no encontrada» u «Objetivo no encontrado», o 403 «solo lectura» para los lectores.
+  - Las rutas inexistentes siguen respondiendo 404.
+  - Los usuarios sin sesión siguen recibiendo 401.
+- **Mensajes de umbrales:** el mensaje de error de orden aviso/crítico en Ajustes tiene el mismo formato que el de la API e incluye las unidades, por ejemplo `En "Latencia (ms)" el aviso (…) debe ser menor que el crítico (…).`
+- **Huella TLS:** el formulario de objetivos la valida con el mismo formato que el servidor. Antes aceptaba huellas con `:` mal colocados que el servidor rechazaba al guardar.
+
+### Corregido
+- **Estadísticas:**
+  - Una muestra que no es un número válido (NaN o infinito) cuenta como pérdida. Antes el servidor la contaba como recibida y la latencia media quedaba vacía.
+  - El panel y el servidor calculan pérdida, latencia y jitter con el mismo código.
+  - El porcentaje de pérdida se redondea de forma exacta: por ejemplo, 23 de 80 da 28,8 % y no 28,7 %.
+
 ## [2.1.0] - 2026-11-18
 
 ### Agregado

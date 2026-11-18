@@ -330,7 +330,6 @@ function hUsersRemove(c) {
   if (dr0.errors) return sendJson(c.res, dr0.status || 400, { errors: dr0.errors });
   return sendJson(c.res, 200, { ok: true });
 }
-function methodNotAllowed(c) { return sendJson(c.res, 405, { error: 'Método no permitido' }); }
 
 // Estado completo, organizaciones y flujo en vivo.
 function hState(c) {
@@ -511,14 +510,17 @@ function hTargetRemove(c) {
 }
 
 /*
- * Tabla de rutas. Gana la PRIMERA que coincide en método y patrón; las entradas con method '*' al final de cada grupo
- * reproducen lo que ocurre con un método no previsto (405 en usuarios; en el resto, 404 tras las comprobaciones previas).
+ * Tabla de rutas. Gana la PRIMERA que coincide en método y patrón. No hay entradas comodín: si el patrón existe con
+ * otro método, la respuesta es 405 con `Allow` (ver api()); las comprobaciones `pre` (organización u objetivo
+ * inexistente) solo se ejecutan cuando el método SÍ está declarado.
  * Campos:
  *   - access: 'public' (sin sesión) | 'session' (cualquier usuario con sesión, incluso lectores) | 'admin' |
  *             'standard' (los lectores solo pueden hacer lecturas y los diagnósticos de readOnlyAllowed).
  *   - mustChange: con la contraseña por defecto sin cambiar, la ruta sigue permitida.
  *   - pre: comprobación previa al manejador; devuelve true si ya respondió.
- * Rutas no listadas (o con otro método): 404 'Ruta no encontrada', tras la sesión y el control de lectores.
+ * Rutas no listadas: 404 'Ruta no encontrada', tras la sesión y el control de lectores. Patrón listado con otro método: 405.
+ * HEAD se trata como GET (sin cuerpo; lo descarta Node). Excepción: `noHead: true` (/api/stream), porque un HEAD abriría
+ * un flujo SSE registrado y sin lector; ahí HEAD responde 405 con `Allow: GET`.
  */
 var ID_USER = '[A-Za-z0-9_]{1,40}', ID_ORG = '[a-z0-9]{1,32}', ID_TARGET = '[A-Za-z0-9_-]{1,64}';
 var ROUTES = [
@@ -531,33 +533,26 @@ var ROUTES = [
 
   { method: 'GET',    pattern: '/api/users',          access: 'admin', handler: hUsersList },
   { method: 'POST',   pattern: '/api/users',          access: 'admin', handler: hUsersCreate },
-  { method: '*',      pattern: '/api/users',          access: 'admin', handler: methodNotAllowed },
   { method: 'PUT',    pattern: '/api/users/:id',      params: { id: ID_USER }, access: 'admin', handler: hUsersUpdate },
   { method: 'DELETE', pattern: '/api/users/:id',      params: { id: ID_USER }, access: 'admin', handler: hUsersRemove },
-  { method: '*',      pattern: '/api/users/:id',      params: { id: ID_USER }, access: 'admin', handler: methodNotAllowed },
 
   { method: 'GET',    pattern: '/api/state',          access: 'standard', handler: hState },
   { method: 'GET',    pattern: '/api/orgs',           access: 'standard', handler: hOrgsList },
   { method: 'POST',   pattern: '/api/orgs',           access: 'standard', handler: hOrgsCreate },
   { method: 'PUT',    pattern: '/api/orgs/:id',       params: { id: ID_ORG }, access: 'standard', pre: preOrgParam, handler: hOrgsUpdate },
   { method: 'DELETE', pattern: '/api/orgs/:id',       params: { id: ID_ORG }, access: 'standard', pre: preOrgParam, handler: hOrgsRemove },
-  { method: '*',      pattern: '/api/orgs/:id',       params: { id: ID_ORG }, access: 'standard', pre: preOrgParam, handler: notFound },
-  { method: 'GET',    pattern: '/api/stream',         access: 'standard', handler: hStream },
+  { method: 'GET',    pattern: '/api/stream',         access: 'standard', noHead: true, handler: hStream },
   { method: 'GET',    pattern: '/api/settings',       access: 'standard', handler: hSettingsGet },
   { method: 'PUT',    pattern: '/api/settings',       access: 'standard', handler: hSettingsPut },
   { method: 'GET',    pattern: '/api/layout',         access: 'standard', pre: preOrgQuery, handler: hLayoutGet },
   { method: 'PUT',    pattern: '/api/layout',         access: 'standard', pre: preOrgQuery, handler: hLayoutPut },
-  { method: '*',      pattern: '/api/layout',         access: 'standard', pre: preOrgQuery, handler: notFound },
   { method: 'POST',   pattern: '/api/traceroute',     access: 'standard', handler: hTraceroute },
   { method: 'GET',    pattern: '/api/targets',        access: 'standard', pre: preOrgQuery, handler: hTargetsList },
   { method: 'POST',   pattern: '/api/targets',        access: 'standard', pre: preOrgQuery, handler: hTargetsCreate },
   { method: 'PUT',    pattern: '/api/targets',        access: 'standard', pre: preOrgQuery, handler: hTargetsReplace },
-  { method: '*',      pattern: '/api/targets',        access: 'standard', pre: preOrgQuery, handler: notFound },
   { method: 'PUT',    pattern: '/api/targets/:id',    params: { id: ID_TARGET }, access: 'standard', pre: preTargetBody, handler: hTargetUpdate },
   { method: 'DELETE', pattern: '/api/targets/:id',    params: { id: ID_TARGET }, access: 'standard', pre: preTarget, handler: hTargetRemove },
-  { method: '*',      pattern: '/api/targets/:id',    params: { id: ID_TARGET }, access: 'standard', pre: preTarget, handler: notFound },
-  { method: 'POST',   pattern: '/api/targets/:id/check', params: { id: ID_TARGET }, access: 'standard', pre: preTarget, handler: hTargetCheck },
-  { method: '*',      pattern: '/api/targets/:id/check', params: { id: ID_TARGET }, access: 'standard', pre: preTarget, handler: notFound }
+  { method: 'POST',   pattern: '/api/targets/:id/check', params: { id: ID_TARGET }, access: 'standard', pre: preTarget, handler: hTargetCheck }
 ];
 var router = routes.createRouter(ROUTES);
 
@@ -595,11 +590,20 @@ async function api(req, res, url) {
   // Gestión de usuarios: solo administradores.
   if (route && route.access === 'admin' && me.role !== 'admin') return sendJson(res, 403, { error: 'Solo un administrador puede gestionar usuarios' });
 
-  // Lectores: solo consulta (y diagnósticos de solo lectura). También rige para rutas desconocidas.
-  if ((!route || route.access === 'standard') && write && me.role === 'viewer' && !readOnlyAllowed(p)) {
+  // Ruta existente con un método no declarado: se resuelve aquí para que el 405 llegue DESPUÉS de 401 y 403 (un
+  // anónimo nunca averigua qué rutas existen) y se aplique a todos los roles. `known.route` aporta el `access` del patrón.
+  var known = route ? null : router.allowed(p);
+
+  // Gestión de usuarios: solo administradores (también con un método no declarado).
+  if (known && known.route.access === 'admin' && me.role !== 'admin') return sendJson(res, 403, { error: 'Solo un administrador puede gestionar usuarios' });
+
+  // Lectores: solo consulta (y diagnósticos de solo lectura). Rige para rutas desconocidas; en una ruta existente
+  // sin ese método manda el 405 (no tiene sentido decir "solo lectura" de algo que nadie puede hacer).
+  if (!known && (!route || route.access === 'standard') && write && me.role === 'viewer' && !readOnlyAllowed(p)) {
     return sendJson(res, 403, { error: 'Tu usuario es de solo lectura' });
   }
 
+  if (known) return sendJson(res, 405, { error: 'Método no permitido' }, { 'Allow': known.methods.join(', ') });
   if (!route) return notFound(c);
   if (route.pre && await route.pre(c)) return;
   return route.handler(c);
