@@ -1,0 +1,12 @@
+.git
+.gitignore
+node_modules
+_legacy
+docs
+data
+*.zip
+*.log
+Dockerfile
+compose.yml
+.dockerignore
+README.md

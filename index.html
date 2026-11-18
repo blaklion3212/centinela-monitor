@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="es" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Centinela · Monitoreo</title>
+  <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/css/tokens.css">
+  <link rel="stylesheet" href="assets/css/base.css">
+  <link rel="stylesheet" href="assets/css/components.css">
+  <link rel="stylesheet" href="assets/css/grid.css">
+  <link rel="stylesheet" href="assets/css/widgets.css">
+  <link rel="stylesheet" href="assets/css/views.css">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><img src="assets/img/logo.svg" alt="" width="26" height="26"><div>Centinela<small>Monitoreo de servicios</small></div></div>
+    <nav class="nav" aria-label="Secciones">
+      <button type="button" data-nav="panel"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg><span>Panel</span></button>
+      <button type="button" data-nav="objetivos"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/><path d="M6 7h.01M6 17h.01"/></svg><span>Objetivos</span></button>
+      <button type="button" data-nav="usuarios" id="nav-users" hidden><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="4"/><path d="M2 21v-1a6 6 0 0 1 6-6h2a6 6 0 0 1 6 6v1M16 4.2a4 4 0 0 1 0 7.6M22 21v-1a6 6 0 0 0-4-5.6"/></svg><span>Usuarios</span></button>
+      <button type="button" data-nav="ajustes"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg><span>Ajustes</span></button>
+    </nav>
+    <div class="top-spacer"></div>
+    <div class="top-meta">
+      <span id="user-box"></span>
+      <span id="global-pill"></span>
+      <span class="mode-badge" id="mode-badge"><i></i>Iniciando…</span>
+      <span class="clock num" id="clock"></span>
+      <button type="button" class="icon-btn" id="btn-theme" aria-label="Cambiar tema"></button>
+    </div>
+  </header>
+  <div class="orgbar" id="orgbar"></div>
+  <main class="main">
+    <div class="banner" id="demo-banner" hidden role="note">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01"/></svg>
+      <div><b>Modo demostración.</b> Los datos son simulados porque no hay servidor de monitoreo conectado. Para medir tus servicios reales ejecuta <code>node server/server.js</code> y abre la dirección que indica.</div>
+      <button type="button" class="btn btn--sm btn--ghost" data-dismiss>Entendido</button>
+    </div>
+    <div class="banner banner--warn" id="pw-banner" hidden role="alert">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M16 7l3 3M14 9l2 2"/></svg>
+      <div><b>Estás usando la contraseña por defecto.</b> Cámbiala ahora: cualquiera que la conozca puede administrar el panel.</div>
+      <button type="button" class="btn btn--sm" data-change-pw>Cambiar contraseña</button>
+    </div>
+    <div id="boot" class="empty" style="min-height:50vh"><span class="spin"></span><span>Cargando panel…</span></div>
+    <section class="view" id="view-panel" aria-label="Panel"></section>
+    <section class="view" id="view-objetivos" aria-label="Objetivos" hidden></section>
+    <section class="view" id="view-usuarios" aria-label="Usuarios" hidden></section>
+    <section class="view" id="view-ajustes" aria-label="Ajustes" hidden></section>
+  </main>
+</div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<!-- Núcleo (sin dependencias; el orden importa) -->
+<script src="js/core/bus.js"></script>
+<script src="js/core/util.js"></script>
+<script src="js/config/defaults.js"></script>
+<script src="js/core/evaluate.js"></script>
+<script src="js/core/validate.js"></script>
+<script src="js/core/store.js"></script>
+<script src="js/config/seed.js"></script>
+<script src="js/services/source-demo.js"></script>
+<script src="js/services/source-live.js"></script>
+<script src="js/services/auth.js"></script>
+<script src="js/services/data.js"></script>
+<!-- Interfaz -->
+<script src="js/ui/ui.js"></script>
+<script src="js/ui/charts.js"></script>
+<script src="js/ui/grid.js"></script>
+<!-- Ventanas (cada archivo registra sus widgets) -->
+<script src="js/widgets/registry.js"></script>
+<script src="js/widgets/common.js"></script>
+<script src="js/widgets/status.js"></script>
+<script src="js/widgets/network.js"></script>
+<script src="js/widgets/application.js"></script>
+<script src="js/widgets/infrastructure.js"></script>
+<!-- Vistas y arranque -->
+<script src="js/views/login.js"></script>
+<script src="js/views/orgs.js"></script>
+<script src="js/views/dashboard.js"></script>
+<script src="js/views/targets.js"></script>
+<script src="js/views/users.js"></script>
+<script src="js/views/settings.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

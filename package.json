@@ -1,0 +1,13 @@
+{
+  "name": "centinela-monitor",
+  "version": "2.0.0",
+  "description": "Dashboard modular de monitoreo de servicios (IPs y URLs) estilo PingPlotter/Zabbix",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node server/server.js",
+    "agent": "node agent/agent.js",
+    "test": "node --test test/*.test.js"
+  }
+}

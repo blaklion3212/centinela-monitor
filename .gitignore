@@ -1,0 +1,11 @@
+# Datos de ejecución (objetivos, usuarios, sesiones): nunca al repositorio
+data/*
+!data/README.md
+# Secretos del despliegue
+.env
+.env.*
+# Dependencias y temporales
+node_modules/
+*.log
+*.zip
+*.tmp

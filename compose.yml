@@ -1,0 +1,50 @@
+# Centinela · docker compose / podman-compose
+#   Iniciar:   docker compose up -d --build        (o: podman-compose up -d --build)
+#   Abrir:     http://IP-DEL-SERVIDOR:9595
+#   Usuario inicial: administrador. Define CENTINELA_ADMIN_PASSWORD (mín. 8 caracteres) en un archivo .env junto a este compose;
+#   si no la defines, el servidor genera una contraseña aleatoria y la muestra una sola vez en el log
+#   (docker logs centinela / podman logs centinela) y obliga a cambiarla en el primer inicio de sesión.
+services:
+  centinela:
+    build: .
+    image: centinela-monitor:latest
+    container_name: centinela
+    restart: unless-stopped
+    ports:
+      - "9595:9595"            # sin IP delante = todas las interfaces del host: accesible desde cualquier IP de tu red
+    environment:
+      PORT: "9595"
+      HOST: "0.0.0.0"
+      CENTINELA_DATA: /data
+      # Solo se usan la PRIMERA vez (cuando aún no existe data/users.json). Después, los usuarios se gestionan en la sección Usuarios.
+      CENTINELA_ADMIN_USER: administrador
+      CENTINELA_ADMIN_PASSWORD: ${CENTINELA_ADMIN_PASSWORD:-}
+      # Lista de IP/nombres con que se abre el panel (protección contra DNS rebinding), p. ej. 192.168.1.20,centinela.lan
+      # localhost, 127.0.0.1 y ::1 siempre se aceptan. Vacía = sin filtro de Host (con autenticación activa).
+      CENTINELA_ALLOWED_HOSTS: ${CENTINELA_ALLOWED_HOSTS:-}
+      CENTINELA_CONCURRENCY: "16"      # mediciones simultáneas (2 a 64)
+      TZ: America/Mexico_City
+    volumes:
+      - centinela-data:/data
+    cap_drop:
+      - ALL                    # endurecimiento: sin capacidades salvo las necesarias
+    cap_add:
+      - NET_RAW                # ping / traceroute (ICMP)
+    security_opt:
+      - no-new-privileges:true
+    read_only: true            # sistema de archivos de solo lectura; los datos van al volumen /data
+    tmpfs:
+      - /tmp
+    mem_limit: 512m
+    pids_limit: 256
+    sysctls:
+      net.ipv4.ping_group_range: "0 65535"   # ICMP sin privilegios; 65535 (no 2147483647) para que funcione también en podman rootless
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9595/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  centinela-data:

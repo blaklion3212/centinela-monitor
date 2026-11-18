@@ -1,0 +1,70 @@
+/* Tokens de diseño: colores, tipografía, espacios. Tema oscuro por defecto; claro con data-theme="light". */
+:root {
+  --bg: #0a1017;
+  --bg-2: #0e1621;
+  --surface: #121b27;
+  --surface-2: #172233;
+  --surface-3: #1e2c41;
+  --line: #243349;
+  --line-soft: #1a2638;
+  --text: #e7eef7;
+  --text-2: #a3b3c7;
+  --muted: #71849c;
+  --accent: #5aa2ff;
+  --accent-ink: #06121f;
+  --accent-soft: rgba(90, 162, 255, .14);
+
+  /* Estados: reservados, siempre con ícono + texto */
+  --up: #3dd9a0;
+  --up-soft: rgba(61, 217, 160, .14);
+  --degraded: #f5b83d;
+  --degraded-soft: rgba(245, 184, 61, .15);
+  --down: #ff6b72;
+  --down-soft: rgba(255, 107, 114, .16);
+  --unknown: #8798ad;
+  --unknown-soft: rgba(135, 152, 173, .16);
+
+  /* Series de gráficas (orden fijo) */
+  --s1: #5aa2ff;
+  --s2: #2cc9b5;
+  --s3: #c08cff;
+  --grid: rgba(163, 179, 199, .12);
+
+  --shadow: 0 8px 28px rgba(0, 0, 0, .45);
+  --radius: 8px;
+  --radius-sm: 5px;
+  --font: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Roboto, Arial, sans-serif;
+  --mono: "Cascadia Mono", "SF Mono", ui-monospace, Consolas, "Liberation Mono", monospace;
+  --row: 34px;       /* alto de fila de la rejilla */
+  --gap: 10px;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --bg: #e9eef5;
+  --bg-2: #f2f5f9;
+  --surface: #ffffff;
+  --surface-2: #f4f7fb;
+  --surface-3: #e6ecf4;
+  --line: #d3dce8;
+  --line-soft: #e4eaf2;
+  --text: #121d2b;
+  --text-2: #44566c;
+  --muted: #6a7c92;
+  --accent: #1d6fe0;
+  --accent-ink: #ffffff;
+  --accent-soft: rgba(29, 111, 224, .11);
+  --up: #0b8f62;
+  --up-soft: rgba(11, 143, 98, .12);
+  --degraded: #a86a00;
+  --degraded-soft: rgba(201, 134, 0, .15);
+  --down: #c9303a;
+  --down-soft: rgba(201, 48, 58, .12);
+  --unknown: #66788e;
+  --unknown-soft: rgba(102, 120, 142, .14);
+  --s1: #1d6fe0;
+  --s2: #0b8f86;
+  --s3: #7c3fd1;
+  --grid: rgba(18, 29, 43, .09);
+  --shadow: 0 8px 24px rgba(20, 40, 70, .18);
+  color-scheme: light;
+}
