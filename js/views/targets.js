@@ -67,7 +67,9 @@
         '<div class="field"><label class="check"><input id="f-ag" type="checkbox" ' + (ag.enabled ? 'checked' : '') + '> Medir CPU, RAM, disco, I/O wait, ancho de banda y servicios</label><span class="hint">Requiere el agente (carpeta <code>agent/</code>) en ese servidor. En el mismo equipo del panel (127.0.0.1) no hace falta instalarlo.</span></div>' +
         '<div data-agent><div class="row c2"><div class="field"><label for="f-agport">Puerto del agente</label><input id="f-agport" type="number" min="1" max="65535" value="' + v(ag.port || 9100) + '"></div>' +
         '<div class="field"><label for="f-agtoken">Token del agente</label><input id="f-agtoken" type="password" autocomplete="new-password" placeholder="' + (ag.hasToken ? 'Guardado — déjalo vacío para conservarlo' : 'Opcional en 127.0.0.1') + '"></div></div>' +
-        '<div class="hint" data-token-warn role="status" hidden style="color:var(--degraded);margin-bottom:8px">Al cambiar la dirección o el puerto se descarta el token guardado del agente; vuelve a escribirlo.</div>' +
+        '<div class="field"><label class="check"><input id="f-agtls" type="checkbox" ' + (ag.tls ? 'checked' : '') + '> Conexión cifrada (TLS)</label></div>' +
+        '<div class="field" data-fp-field><label for="f-agfp">Huella SHA-256 del certificado (obligatoria con TLS)</label><input id="f-agfp" type="text" maxlength="95" autocomplete="off" spellcheck="false" aria-describedby="f-agfp-h" value="' + v(ag.fingerprint) + '" placeholder="64 caracteres hexadecimales, con o sin :"><span class="hint" id="f-agfp-h">Obligatoria con TLS: el agente la imprime al arrancar con --tls-cert/--tls-key.</span></div>' +
+        '<div class="hint" data-token-warn role="status" hidden style="color:var(--degraded);margin-bottom:8px">Al cambiar la dirección o el puerto, al cambiar la huella o desactivar TLS, se descarta el token guardado del agente; vuelve a escribirlo.</div>' +
         '<div class="field"><label for="f-svc">Servicios a vigilar</label><input id="f-svc" type="text" value="' + v(listStr(ag.services)) + '" placeholder="nginx, docker, mysqld"><span class="hint">Nombre del servicio o proceso, separados por coma.</span></div></div></fieldset></form>';
     return { html: html, kind: kind, isNew: isNew };
   }
@@ -86,16 +88,24 @@
           var sslBox = rootEl.querySelector('#f-ssl').closest('.field');
           sslBox.hidden = false;
           rootEl.querySelectorAll('[data-kind]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-kind') === kind)); });
+          var tlsOn = rootEl.querySelector('#f-agtls').checked;
+          rootEl.querySelector('[data-fp-field]').hidden = !tlsOn;
+          rootEl.querySelector('#f-agfp').required = tlsOn; // con TLS la huella es obligatoria
           rootEl.querySelector('[data-agent]').style.opacity = rootEl.querySelector('#f-ag').checked ? 1 : .5;
         }
         rootEl.addEventListener('click', function (e) { var b = e.target.closest('[data-kind]'); if (b) { kind = b.getAttribute('data-kind'); if (!t) rootEl.querySelector('#f-ssl').checked = kind === 'url'; sync(); } });
         rootEl.querySelector('#f-ag').addEventListener('change', sync);
+        rootEl.querySelector('#f-agtls').addEventListener('change', sync);
         // Con token guardado, cambiar dirección o puerto lo descarta en el servidor: se avisa en el formulario.
         if (t && t.checks && t.checks.agent && t.checks.agent.hasToken) {
-          var warn = rootEl.querySelector('[data-token-warn]'), addr0 = String(t.address || ''), port0 = String(t.checks.agent.port || 9100);
-          var chk = function () { warn.hidden = !(rootEl.querySelector('#f-addr').value.trim() !== addr0 || rootEl.querySelector('#f-agport').value.trim() !== port0); };
+          var warn = rootEl.querySelector('[data-token-warn]'), addr0 = String(t.address || ''), port0 = String(t.checks.agent.port || 9100), tls0 = !!t.checks.agent.tls;
+          // Huella comparada normalizada: sin ':' y en mayúsculas.
+          var nfp = function (s) { return String(s || '').replace(/:/g, '').trim().toUpperCase(); }, fp0 = nfp(t.checks.agent.fingerprint);
+          var chk = function () { warn.hidden = !(nfp(rootEl.querySelector('#f-agfp').value) !== fp0 || rootEl.querySelector('#f-addr').value.trim() !== addr0 || rootEl.querySelector('#f-agport').value.trim() !== port0 || (tls0 && !rootEl.querySelector('#f-agtls').checked)); };
           rootEl.querySelector('#f-addr').addEventListener('input', chk);
           rootEl.querySelector('#f-agport').addEventListener('input', chk);
+          rootEl.querySelector('#f-agtls').addEventListener('change', chk);
+          rootEl.querySelector('#f-agfp').addEventListener('input', chk);
         }
         rootEl.querySelector('#tf').addEventListener('submit', function (e) { e.preventDefault(); save(rootEl, t, kind, m.close); });
         sync();
@@ -110,8 +120,15 @@
       intervalSec: val('#f-int'), enabled: chk('#f-en'),
       checks: { ping: chk('#f-ping'), ports: val('#f-ports'), ssl: chk('#f-ssl'),
         http: kind === 'url' ? { expectedStatus: val('#f-exp'), keyword: val('#f-kw'), method: val('#f-method'), timeoutMs: val('#f-to'), browser: !!(rootEl.querySelector('#f-browser') && rootEl.querySelector('#f-browser').checked) } : null,
-        agent: { enabled: chk('#f-ag'), port: val('#f-agport'), token: val('#f-agtoken'), services: val('#f-svc') } }
+        agent: { enabled: chk('#f-ag'), port: val('#f-agport'), token: val('#f-agtoken'), tls: chk('#f-agtls'), fingerprint: chk('#f-agtls') ? val('#f-agfp').trim() : '', services: val('#f-svc') } }
     };
+    // Validación en cliente: con TLS la huella es obligatoria (64 hex, con o sin ':').
+    if (payload.checks.agent.enabled && payload.checks.agent.tls && !/^[0-9a-fA-F]{64}$/.test(payload.checks.agent.fingerprint.replace(/:/g, ''))) {
+      var eb = rootEl.querySelector('[data-errors]');
+      eb.innerHTML = '<div class="errors" role="alert"><ul><li>Con TLS activado, la huella SHA-256 del certificado es obligatoria: 64 caracteres hexadecimales, con o sin “:”.</li></ul></div>';
+      rootEl.querySelector('.modal__body').scrollTop = 0;
+      return;
+    }
     var p = existing ? NOC.data.updateTarget(existing.id, payload) : NOC.data.createTarget(payload);
     p.then(function () { close(); ui.toast(existing ? 'Cambios guardados' : 'Objetivo agregado', 'ok'); })
      .catch(function (e) {

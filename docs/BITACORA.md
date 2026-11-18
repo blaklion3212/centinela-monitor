@@ -399,3 +399,133 @@ Resultado de las comprobaciones:
   - Enrutador declarativo para `api()`.
   - Compartir la validación y las estadísticas entre cliente y servidor.
 - **Entorno:** comprobar `podman restart` en el servidor real.
+
+---
+
+## 2026-11-18 · Fase 3: pendientes de la 2.0.0 (objetivo: 2.1.0)
+
+**Petición del usuario:** completar los puntos que quedaron fuera de la 2.0.0.
+
+**Plan**
+
+| Fase | Responsable | Alcance |
+|---|---|---|
+| F1a | implementador | N-04 `CENTINELA_TRUST_PROXY` (`clientIp`), H-17 intervalo mínimo de 5 s en `/check` (429 con `Retry-After`), N-05 cupo con verificaciones huérfanas, V-05 reserva del intento antes del hash |
+| F1b | implementador | TLS opcional del agente (`--tls-cert`/`--tls-key`) con huella SHA-256 fijada en el objetivo (`checks.agent.tls` y `checks.agent.fingerprint`); el token no se envía si la huella no coincide |
+| F1c | implementador | H-1 (`verify()` atiende `mustChange`); campos TLS en el formulario; aviso "TLS sin huella fijada" |
+| F1d | devops-ci | GitHub Actions con Node 18, 20 y 22, más build de la imagen |
+| F2 | refactorizador | Enrutador declarativo de `api()` y validación compartida entre cliente y servidor, sin cambiar el comportamiento |
+| F3 | probador | Pruebas nuevas, QA-8 y `.claude/proyecto/pruebas.md` |
+| F4 | revisor-qa y auditor-seguridad | Verificación |
+| F5 | varios | Capturas automáticas con Firefox headless por WebDriver BiDi (Figuras 12, 14 y 15), documentación, PDF, laboratorio podman con `restart` fuera del sandbox, CHANGELOG 2.1.0, y commit y etiqueta con aprobación |
+
+**Decisión del orquestador:** el TLS del agente es opcional y compatible. La huella fijada protege el token contra suplantación; sin huella, la conexión va cifrada pero con una advertencia visible.
+
+**Estado:** F1 en curso, con 4 agentes en paralelo.
+
+**F5 (adelantado) · Laboratorio podman `restart`, ejecutado fuera del sandbox**
+- `podman restart centinela` falla en este equipo con `rootless netns: kill network process: permission denied` (rc=125) y deja el contenedor **detenido**. Ocurre tanto dentro de un pod como con `--in-pod=false`, así que es un problema de podman rootless en este host y no de Centinela.
+- Alternativas que sí funcionan:
+  - `podman-compose -p <proyecto> restart`: el contenedor queda en estado healthy y `/api/health` responde OK.
+  - `podman stop centinela && podman start centinela`.
+- `podman-restart.service` (usuario) está **deshabilitado**. Sin él, `restart: unless-stopped` no levanta el contenedor al reiniciar el equipo. Se habilita con `systemctl --user enable podman-restart.service` y `loginctl enable-linger $USER`.
+- Laboratorio limpio: 0 contenedores, pods, imágenes y volúmenes; solo queda la red `podman`; el puerto 9595 está libre.
+- Debe documentarse en la guía de despliegue y en el manual (F5).
+
+**F1 ✅** Integración verificada por el orquestador: 207/207 pruebas.
+- **F1a:** `clientIp()` y `CENTINELA_TRUST_PROXY`; `lastManual` (429 `Retry-After: 5`); `scheduler.stats()`, `capacity()` y `drain()`; `reserve()` y `cancelReserve()` en auth. El límite por IP sigue en "más de 20", como está documentado.
+- **F1b:** TLS del agente. Con huella distinta, el servidor falso recibió 0 peticiones. El campo de advertencia es `agent.warning` (texto).
+- **F1c:** H-1, campos TLS y `agentWarn`. El orquestador alineó el widget para que lea `warning` y también `warnings`.
+- **F1d:** `.github/workflows/pruebas.yml` con Node 18, 20 y 22 y build de la imagen; permiso `contents: read`.
+
+**F3 ✅** 268/268 pruebas. Archivos nuevos:
+- `trust-proxy`, `check-manual`, `scheduler-huerfanas`, `agent-tls` e `infrastructure-widget`, más el helper `certs`.
+- QA-8 cerrado con `Expect: 100-continue`.
+- `.claude/proyecto/pruebas.md` completado.
+- Las mutaciones introducidas a propósito fueron detectadas por la suite.
+
+**F2 ✅**
+- `server/lib/routes.js` y la tabla `ROUTES`. Cada ruta declara `access`, `mustChange` y `pre`. Las entradas `'*'` son deliberadas: conservan las respuestas antiguas. Al añadir rutas, conservar su orden.
+- `js/shared/thresholds.js` (UMD), usado por `validate.js` y `settings.js`.
+- 135 peticiones dieron respuestas idénticas antes y después; 20 000 casos de fuzz dieron el mismo resultado en los umbrales.
+- **Backlog:**
+  - Unificar `U.stats` y `server/lib/util.stats`, que difieren en `isNum` frente a `typeof` y no tienen pruebas del cliente.
+  - Unificar los mensajes de orden aviso/crítico entre cliente y API.
+  - 405 coherente fuera de `/users`.
+
+**F4 ⏳** `revisor-qa` y `auditor-seguridad` en paralelo; F3b (pruebas de `routes` y `thresholds`) en paralelo.
+
+**F3b ✅**
+- `test/routes.test.js` (25 pruebas) y `test/thresholds.test.js` (22 pruebas); 315 pruebas en total.
+- El orquestador corrigió el bug de `BY_ID` heredado del prototipo: ahora usa `Object.create(null)`.
+
+**F4 · Verificación**
+- `auditor-seguridad`: **apto con reservas** (S3-1 a S3-9).
+- `revisor-qa`: **apto con reservas** (QA3-1 a QA3-9). Un diferencial de 980 casos del enrutador frente a v2.0.0 dio 0 diferencias.
+
+**Decisiones**
+- **Usuario:** con TLS activado, la huella es **obligatoria** (S3-1).
+- **Orquestador:**
+  - Si cambia o se quita la huella, el token se descarta (S3-2 / QA3-5).
+  - Se mantiene `engines >=18`; Node 24 se añade a la CI. Subir el mínimo sería incompatible en una MINOR.
+
+**Ronda de corrección 1** (2 implementadores en paralelo)
+- **A, servidor:**
+  - S3-1, S3-2 y QA3-8.
+  - Plazo absoluto de 10 s en `agentFetch` (S3-4 / QA3-1) y comentario sobre `agent:false` (S3-9).
+  - Tope de la huérfana en 2 × timeout (QA3-2).
+  - `net.isIP` en `clientIp` y aviso de `TRUST_PROXY` inválido (S3-3 / QA3-4).
+  - Cupo de `/check` por usuario y poda de `lastManual` (S3-5 / QA3-7).
+  - `lockKey` con el nombre limpio (S3-6).
+- **B, frontend y CI:**
+  - Huella obligatoria en el formulario y aviso al cambiarla.
+  - `applyRole` en `verify` (QA3-6) y etiqueta de respaldo en ajustes.
+  - CI con `persist-credentials: false`, Node 24 y acciones fijadas por SHA si se puede verificar.
+- **`depurador`:** causa de la intermitencia de la prueba de H-17.
+
+**Ronda de corrección 1: resultados**
+- **B ✅**
+  - Huella obligatoria en el formulario (que tiene `novalidate`) y aviso cuando cambia la huella.
+  - `applyRole` en `verify`, que es idempotente.
+  - CI con Node 18, 20, 22 y 24, `persist-credentials: false`, y `checkout` y `setup-node` fijados por SHA (v4.4.0, verificado con `gh`).
+- **A ✅**
+  - Las 8 correcciones aplicadas.
+  - Mensajes nuevos: 'Con TLS activado, la huella SHA-256 del certificado del agente es obligatoria', 'Falta la huella TLS del agente', 'El agente tardó demasiado en responder' y 429 'Demasiadas verificaciones manuales; espera un momento' (3 simultáneas o 30 por minuto por usuario).
+  - Se eliminó la advertencia 'TLS sin huella fijada'.
+  - 4 pruebas con expectativa obsoleta quedan para el probador (F3c).
+- **Incidente:** el implementador A usó la variable `CENTINELA_DATA_DIR`, que no existe (la correcta es `CENTINELA_DATA`), y el servidor escribió 4 archivos en `data/` del repo a las 15:29. El usuario aprobó borrarlos y se borraron. `data/README.md` está intacto.
+  - Lección: todo brief que arranque el servidor debe indicar `CENTINELA_DATA=<directorio temporal>`.
+
+**F3c ✅**
+- 334/334 pruebas, 3 ejecuciones verdes seguidas. Las 4 pruebas con expectativa obsoleta se ajustaron y se añadieron pruebas del cupo manual, del plazo de 10 s, del tope de la huérfana, de `parseForwarded`, de `lockKey` y del import con huella.
+- **Intermitencia de H-17, diagnóstico del `depurador`:** carrera de puertos en `freePort()` del helper (`EADDRINUSE`); el orden 409/429 de producción es correcto.
+  - Corrección, solo en pruebas: reintento de `startServer` ante `EADDRINUSE` y conteo por User-Agent de la sonda en el servidor mudo.
+  - También se corrigió la carrera de `lanzarAgente`, que esperaba solo la primera línea del log del agente.
+- La validación de la huella en el formulario no tiene prueba propia: el servidor la impone y está cubierta.
+
+**F5 ✅**
+- **Capturas:** las Figuras 12, 14 y 15 se rehicieron con Firefox headless y WebDriver W3C directo (`geckodriver` del snap, sin selenium), con datos ficticios. El nombre del equipo se sustituyó por "servidor-demo".
+- **Documentación:**
+  - `despliegue-seguro.md`: proxy de confianza, TLS del agente y podman.
+  - Manual: capítulos 2–18 y Anexos C (variables) y D (mensajes); se retiraron las notas de las capturas antiguas.
+  - `CAMBIOS-MANUAL.md` y README.
+- **Orquestador:**
+  - `CENTINELA_TRUST_PROXY` añadido a `compose.yml` (validado con `podman-compose config`) y notas ajustadas.
+  - CHANGELOG en `[Sin publicar]`.
+  - PDF regenerado (71 páginas, versión 2.1.0, sin restos de `admin01` ni de 'TLS sin huella fijada').
+- **Limpieza:** no quedan servidores de prueba vivos. Se borraron dos carpetas `/tmp/centinela-tls-*` de las pruebas de carga del depurador. `data/` solo contiene `README.md`.
+
+**Cierre de la fase 3**
+- Checklist de terminado:
+  - Requisitos del backlog cubiertos.
+  - 334/334 pruebas.
+  - QA y seguridad sin hallazgos críticos ni altos; los medios están corregidos.
+  - Documentación y PDF al día.
+  - Sin secretos.
+- **Backlog restante:**
+  - Unificar `U.stats` del cliente con el del servidor.
+  - Unificar los mensajes de orden de umbrales entre cliente y API.
+  - 405 coherente fuera de `/users`.
+  - Prueba de la huella en el formulario, si se extrae a una función pura.
+  - Primera ejecución real de la CI cuando exista el remoto.
+- **Versión 2.1.0 aprobada por el usuario.** Commit y etiqueta local `v2.1.0`, sin remoto.

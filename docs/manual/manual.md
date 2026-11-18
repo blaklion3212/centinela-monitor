@@ -1,7 +1,7 @@
 ---
 title: Manual de usuario y configuración
 subtitle: Dashboard modular de monitoreo de IPs y URLs, estilo PingPlotter / Zabbix
-version: 2.0.0
+version: 2.1.0
 date: 18 de noviembre de 2026
 ---
 
@@ -55,7 +55,7 @@ El sistema tiene tres piezas. Entender para qué sirve cada una evita la confusi
 
 1. Descomprime el proyecto (carpeta `centinela-monitor`) en el servidor que hará las mediciones.
 2. Abre una terminal en esa carpeta y ejecuta: `node server/server.js` (también sirve `npm start`).
-3. La terminal muestra la dirección, por ejemplo `Centinela 2.0.0 → http://127.0.0.1:8080`, el número de usuarios, la carpeta de datos usada y, solo en el primer arranque, el usuario inicial con su contraseña (sección 9.1).
+3. La terminal muestra la dirección, por ejemplo `Centinela 2.1.0 → http://127.0.0.1:8080`, el número de usuarios, la carpeta de datos usada y, solo en el primer arranque, el usuario inicial con su contraseña (sección 9.1).
 4. Abre esa dirección en el navegador e inicia sesión con el usuario `administrador` y la contraseña inicial (sección 9.1). Si la contraseña era la aleatoria del registro, el panel te pedirá cambiarla antes de continuar. La insignia de arriba debe decir En vivo.
 5. Ve a Objetivos y agrega tus IPs y URLs (capítulo 6). En el primer arranque el sistema crea data/ con objetivos de ejemplo (DNS Google, DNS Cloudflare, Google, Wikipedia, Sitio de ejemplo y el servidor local); puedes borrarlos.
 
@@ -72,7 +72,8 @@ El sistema tiene tres piezas. Entender para qué sirve cada una evita la confusi
 | CENTINELA_COOKIE_SECURE | desactivado | Con el valor 1 la cookie de sesión lleva el atributo Secure. Úsalo solo detrás de un proxy con HTTPS: sin HTTPS el navegador no enviaría la cookie y no podrías iniciar sesión. |
 | CENTINELA_DATA | carpeta data/ del proyecto | Ruta alternativa donde guardar targets.json, settings.json, layout.json, orgs.json, users.json y orgs/. Útil para separar los datos del código, tener respaldos en otro disco o correr varias instancias. |
 | CENTINELA_CONCURRENCY | 16 | Mediciones que pueden correr al mismo tiempo (2 a 64), compartidas por todas las organizaciones. Súbela si monitoreas muchos objetivos y las gráficas se actualizan más despacio que el intervalo (ver capítulo 7). |
-| CENTINELA_CHECK_TIMEOUT_MS | 120000 | Plazo máximo, en milisegundos, de una verificación completa de un objetivo (mínimo 5000). Si se excede, el objetivo pasa a DOWN con el motivo “La verificación excedió el tiempo máximo” (sección 3.5). Súbelo solo si tienes verificaciones legítimamente muy lentas. |
+| CENTINELA_CHECK_TIMEOUT_MS | 120000 | Plazo máximo, en milisegundos, de una verificación completa de un objetivo (mínimo 5000). Si se excede, el objetivo pasa a DOWN con el motivo “La verificación excedió el tiempo máximo” (sección 3.5). Súbelo solo si tienes verificaciones legítimamente muy lentas. Una sonda que no termina se libera como máximo a 2 veces este plazo (sección 3.5). |
+| CENTINELA_TRUST_PROXY | (vacía) | Lista, separada por comas, de IP de proxies inversos de confianza (por ejemplo 127.0.0.1,10.0.0.5). Solo sirve si pones un proxy delante del panel: con ella el servidor lee la cabecera X-Forwarded-For para saber la IP real de cada cliente y el bloqueo de intentos deja de ser compartido por todos (sección 12.1). Solo IP literales, sin rangos CIDR ni nombres: una entrada que no sea una IP se ignora y el servidor lo avisa al arrancar. Vacía = X-Forwarded-For se ignora. |
 
 Ejemplos de arranque con variables:
 
@@ -143,9 +144,27 @@ Cada métrica tiene dos valores en Ajustes: Degradado (aviso) y Crítico. Son gl
 | Puertos | Intenta una conexión TCP a cada puerto y mide el tiempo. | Espera 3 s. Abierto = la conexión se establece. |
 | HTTP/HTTPS | Pide la URL (GET o HEAD), sigue hasta 10 redirecciones (también a otro dominio, con sus cookies), mide TTFB y tiempo total, y revisa el código. | Tiempo máximo configurable. Con GET puede leer hasta 256 KB para buscar el texto esperado. Si el plazo vence con la respuesta a medias, se informa tiempo agotado. Identifica al monitor como Centinela-Monitor (sin número de versión). |
 | SSL/TLS | Lee el certificado del servidor: vigencia, emisor, protocolo y si la cadena es confiable. | No rechaza certificados inválidos (para poder reportarlos). Solo URLs https, o puerto 443 de un host. |
-| Agente | Pide las métricas del servidor al agente por HTTP. | Espera 6 s y acepta respuestas de hasta 1 MB. Si el objetivo es 127.0.0.1/localhost se leen directamente, sin agente. |
+| Agente | Pide las métricas del servidor al agente por HTTP o, si el objetivo tiene “Conexión cifrada (TLS)”, por HTTPS comprobando la huella del certificado. | Espera 6 s de inactividad, con un plazo absoluto de 10 s por consulta (“El agente tardó demasiado en responder”), y acepta respuestas de hasta 1 MB. Si el objetivo es 127.0.0.1/localhost se leen directamente, sin agente. |
 
 > **Importante:** además de los tiempos de cada sonda, toda la verificación de un objetivo (todas sus sondas juntas) tiene un plazo global de 120 s, ajustable con CENTINELA_CHECK_TIMEOUT_MS (sección 2.3). Si se excede, el objetivo se marca DOWN con el motivo “La verificación excedió el tiempo máximo” y se libera su cupo de medición; mientras la verificación colgada no termine, no se lanza otra del mismo objetivo. Al pulsar “verificar ahora”, si se vence el plazo, el servidor responde con éxito y el resultado es el objetivo en DOWN con ese motivo. Si ya hay una verificación en curso de ese objetivo, responde 409 “Ya hay una verificación en curso para este objetivo”.
+
+### Verificaciones colgadas
+
+Si la sonda de una verificación sigue viva después del plazo global, se llama huérfana. Centinela la trata así:
+
+- Una huérfana se libera como máximo a los 2 × CENTINELA_CHECK_TIMEOUT_MS (por defecto, 240 s), aunque no haya terminado.
+- Mientras haya huérfanas vivas, la capacidad de mediciones simultáneas baja (hasta la mitad de CENTINELA_CONCURRENCY), para que una sonda atascada no sature el servidor.
+- La consola del servidor avisa: `[scheduler] verificación huérfana: "Nombre" excedió el plazo; huérfanas vivas: N` y, al liberarla, otra línea con el motivo. Si ves estos avisos con frecuencia, revisa el destino o el agente del objetivo que se nombra.
+
+### Límites de “verificar ahora”
+
+El botón “verificar ahora” (en la API, POST /api/targets/{id}/check) tiene límites para que no se use para saturar el servidor. Se evalúan en este orden:
+
+| Situación | Respuesta | Qué hacer |
+|---|---|---|
+| Ya hay una verificación en curso de ese objetivo | 409 “Ya hay una verificación en curso para este objetivo” | Espera a que termine. |
+| Pasaron menos de 5 s desde la última verificación manual de ese objetivo | 429 “Espera unos segundos antes de volver a verificar este objetivo”, con la cabecera Retry-After (segundos) | Reintenta tras el tiempo indicado. |
+| Más de 3 verificaciones manuales simultáneas o 30 en un minuto, por usuario (por IP si el inicio de sesión está desactivado) | 429 “Demasiadas verificaciones manuales; espera un momento”, con Retry-After | Espera un momento; el límite por minuto es una ventana móvil de 60 s. |
 
 > **Nota:** las mediciones se hacen desde el equipo del servidor de monitoreo, no desde tu navegador. La latencia que ves es la de ese equipo hacia el objetivo. Si quieres saber cómo se ve el servicio desde otra sucursal, instala otra copia de Centinela allá.
 
@@ -268,10 +287,14 @@ El cuadro Buscar filtra por nombre, dirección, grupo o etiqueta mientras escrib
 |---|---|---|---|
 | Medir CPU, RAM, disco, I/O wait, ancho de banda y servicios | Activa la consulta de métricas internas del servidor. | Desmarcado por defecto. | En servidores que administras. En el mismo equipo del panel (127.0.0.1) no requiere instalar nada; en servidores remotos sí (capítulo 11). |
 | Puerto del agente | Puerto donde escucha el agente de ese servidor. | 1–65535. Por defecto 9100. | Cámbialo si el 9100 ya está en uso; debe coincidir con --port del agente. |
-| Token del agente | Contraseña compartida con el agente (se envía como Authorization: Bearer). | Hasta 200 caracteres. Opcional solo en 127.0.0.1. Nunca se muestra de nuevo: al editar, dejarlo vacío conserva el guardado. | Obligatorio en servidores remotos. Usa una cadena larga y distinta por servidor. Si cambias la dirección del objetivo (incluso solo la ruta de una URL) o el puerto del agente, el token guardado se descarta para no enviarlo a otro destino: el formulario te lo avisa y debes escribirlo de nuevo. |
+| Conexión cifrada (TLS) | Consulta al agente por HTTPS en lugar de HTTP. El token y las métricas viajan cifrados. | Desmarcado por defecto. Solo funciona si el agente se arrancó con --tls-cert y --tls-key (sección 11.4). | Actívala para agentes fuera de tu red de gestión o en redes que no controlas del todo. Al marcarla aparece el campo de la huella, que es obligatoria. |
+| Huella SHA-256 del certificado | Identifica el certificado del agente. El panel solo envía el token si el certificado que presenta el agente tiene exactamente esta huella; así un servidor falso no recibe el secreto. | Obligatoria con TLS. 64 caracteres hexadecimales, con o sin “:” (por ejemplo AA:BB:…). Se guarda con “:” y en mayúsculas. Sin TLS se descarta. | Cópiala de lo que imprime el agente al arrancar (“Huella SHA-256 del certificado (cópiala al dashboard)”). Si renuevas el certificado del agente, la huella cambia: actualízala aquí. |
+| Token del agente | Contraseña compartida con el agente (se envía como Authorization: Bearer). | Hasta 200 caracteres. Opcional solo en 127.0.0.1. Nunca se muestra de nuevo: al editar, dejarlo vacío conserva el guardado. | Obligatorio en servidores remotos. Usa una cadena larga y distinta por servidor. Si cambias la dirección del objetivo (incluso solo la ruta de una URL), el puerto del agente o la huella, o desactivas TLS, el token guardado se descarta para no enviarlo a otro destino: el formulario te lo avisa y debes escribirlo de nuevo. |
 | Servicios a vigilar | Servicios o procesos que deben estar encendidos; si uno está detenido el objetivo pasa a DOWN. | Hasta 20, separados por coma. Cada nombre: debe empezar con letra o número y puede contener letras, números y . _ @ : - (máx. 64). | Nombre del servicio en el sistema: nginx, apache2, httpd, docker, sshd, mysqld, postgresql, tomcat, cups (spooler de impresión) o el nombre en Windows (Spooler, W3SVC). |
 
-> **Importante:** si editas un objetivo que ya tiene token guardado y cambias su dirección o el puerto del agente, aparece bajo el campo del token el aviso “Al cambiar la dirección o el puerto se descarta el token guardado del agente; vuelve a escribirlo.” Si guardas sin escribir el token, el agente quedará sin él y responderá “token rechazado”.
+> **Importante:** si editas un objetivo que ya tiene token guardado y cambias su dirección, el puerto del agente o la huella, o desmarcas “Conexión cifrada (TLS)”, aparece bajo el campo del token el aviso “Al cambiar la dirección o el puerto, al cambiar la huella o desactivar TLS, se descarta el token guardado del agente; vuelve a escribirlo.” Si guardas sin escribir el token, el agente quedará sin él y responderá “token rechazado”.
+
+> **Importante:** con “Conexión cifrada (TLS)” la huella es obligatoria. El formulario no deja guardar sin ella (“Con TLS activado, la huella SHA-256 del certificado es obligatoria: 64 caracteres hexadecimales, con o sin “:”.”) y el servidor tampoco la acepta. Un objetivo guardado con TLS y sin huella (por ejemplo, por una versión anterior) no envía el token y muestra “Falta la huella TLS del agente”.
 
 ## 6.3 Errores de validación frecuentes
 
@@ -284,6 +307,8 @@ El cuadro Buscar filtra por nombre, dirección, grupo o etiqueta mientras escrib
 | Escribe una IP o un nombre de host válido (sin http:// ni espacios) | Tipo host con una URL, espacios o caracteres no permitidos. | Quita el protocolo y la ruta, o cambia el tipo a URL. |
 | Códigos HTTP esperados no válidos | Formato incorrecto. | Usa 200-399, 200,401 o mezclas. |
 | Nombre de servicio no válido | Un servicio tiene espacios, otros símbolos o empieza con un carácter que no es letra ni número. | Usa solo el nombre del servicio, separado por comas. |
+| Con TLS activado, la huella SHA-256 del certificado del agente es obligatoria | Marcaste “Conexión cifrada (TLS)” y dejaste la huella vacía. | Pega la huella que imprime el agente al arrancar, o desmarca TLS. |
+| Huella TLS no válida (64 caracteres hexadecimales) | La huella no tiene 64 caracteres hexadecimales (con o sin “:” entre pares). | Cópiala completa de la salida del agente. |
 
 ## 6.4 Importar y exportar
 
@@ -373,8 +398,6 @@ En demostración se simulan también las organizaciones: viene una organización
 
 ![Figura 12. Ajustes: tema, intervalo por defecto, puntos de historial y umbrales de alerta.](img/p24-fig-013.jpg)
 
-> **Nota:** la captura anterior se tomó en modo demostración y su cuadro “Cómo medir servidores remotos” muestra un comando antiguo con `--token`. En la versión actual ese cuadro indica `CENTINELA_AGENT_TOKEN=UN_SECRETO_LARGO node agent.js --port 9100 --host IP_DEL_SERVIDOR`, que es el método recomendado (capítulo 11).
-
 ## 8.1 General
 
 | Ajuste | Qué hace | Valores | Cuándo cambiarlo |
@@ -412,7 +435,7 @@ Reglas que aplica Ajustes al guardar (el formulario y el servidor las comprueban
 
 - El cuadro Conexión indica si estás En vivo (con el nombre, sistema y versión de Node del servidor) o en Demostración. Estos datos del equipo solo se entregan a los administradores; los demás roles ven el cuadro sin ese detalle.
 - En demostración aparece Borrar datos de demostración: elimina objetivos, ajustes y disposición guardados en ese navegador y recarga la página. No afecta a un servidor real.
-- El cuadro Cómo medir servidores remotos resume los cuatro pasos para instalar un agente (capítulo 11).
+- El cuadro Cómo medir servidores remotos resume los pasos para instalar un agente: copiar agent/, ejecutarlo con `CENTINELA_AGENT_TOKEN=UN_SECRETO_LARGO node agent.js --port 9100 --host IP_DEL_SERVIDOR`, el paso opcional de cifrar con TLS (`--tls-cert` y `--tls-key`; el agente imprime la huella SHA-256 y, con TLS, esa huella es obligatoria en el objetivo), abrir el puerto solo a la IP del panel y activar “Salud del servidor” en el objetivo (capítulo 11).
 
 # 9. Usuarios y acceso
 
@@ -431,7 +454,7 @@ La primera vez que arranca el servidor (cuando no existe data/users.json) crea u
 En el registro de arranque (la consola con `node server/server.js`; en contenedor, `docker logs centinela` o `podman logs centinela`) la contraseña generada aparece así:
 
 ```
-Centinela 2.0.0 → http://127.0.0.1:8080
+Centinela 2.1.0 → http://127.0.0.1:8080
 Acceso: inicio de sesión activado (1 usuario(s))
 Usuario inicial creado: administrador (deberá cambiar la contraseña al entrar)
 ============================================================
@@ -465,9 +488,9 @@ Cuando una cuenta está marcada como “debe cambiar la contraseña” (la gener
 
 ## 9.3 La sección Usuarios (solo administradores)
 
-![Figura 14. Gestión de usuarios: rol, estado, fecha de creación y último acceso.](img/p27-fig-015.jpg)
+![Figura 14. Gestión de usuarios: rol, estado (con la etiqueta “debe cambiar la contraseña”), fecha de creación y último acceso.](img/p27-fig-015.jpg)
 
-> **Nota:** en la versión actual, la columna Estado muestra además la etiqueta ámbar “debe cambiar la contraseña” junto a los usuarios que tienen un cambio obligatorio pendiente (la captura es anterior y no la incluye). Ya no aparece la marca “contraseña por defecto”.
+La columna Estado muestra la etiqueta ámbar “debe cambiar la contraseña” junto a los usuarios que tienen un cambio obligatorio pendiente.
 
 | Parámetro | Qué hace | Valores y límites | Cuándo / cómo usarlo |
 |---|---|---|---|
@@ -475,13 +498,11 @@ Cuando una cuenta está marcada como “debe cambiar la contraseña” (la gener
 | Rol | Administrador, Operador o Lector (sección 9.2). | Uno de los tres. | Lector para quien solo vigila (pantallas de pared, gerencia); Operador para quien da de alta servicios; Administrador solo para quien gestiona accesos. |
 | Contraseña | Se guarda cifrada (scrypt con sal); ni el administrador puede verla. | Mínimo 8 caracteres, máximo 200. | Larga y única. Al crear el usuario, entrégasela por un canal seguro y pídele que la cambie. |
 | Nueva contraseña (al editar) | Restablece la contraseña de ese usuario y cierra sus sesiones abiertas. Si editas tu propio usuario, tu sesión actual no se cierra. | Vacía = no cambia. | Cuando alguien olvida su contraseña o sospechas que se filtró. |
-| Obligar a cambiar la contraseña al entrar | Marca la cuenta como “debe cambiar la contraseña”: en su próximo inicio de sesión tendrá que definir una nueva antes de usar el panel. | Al crear un usuario viene desmarcada; al editar viene marcada, y solo se aplica si escribes una nueva contraseña. No aparece al editar tu propio usuario. Si la API recibe forceChange sin contraseña nueva, el usuario afectado deja de recibir datos en vivo hasta que la cambie. | Márcala cuando tú le asignas la contraseña (alta o restablecimiento), para que la persona la reemplace por una que solo ella conozca. |
+| Obligar a cambiar la contraseña al entrar | Marca la cuenta como “debe cambiar la contraseña”: en su próximo inicio de sesión tendrá que definir una nueva antes de usar el panel. | Al crear un usuario viene desmarcada; al editar viene marcada, y solo se aplica si escribes una nueva contraseña. No aparece al editar tu propio usuario. Si la API recibe forceChange sin contraseña nueva, el usuario afectado deja de recibir datos en vivo hasta que la cambie. | Márcala cuando tú le asignas la contraseña (alta o restablecimiento), para que la persona la reemplace por una que solo ella conozca. Si la persona ya tiene el panel abierto, su pestaña también muestra la ventana “Debes cambiar tu contraseña” (no puede cerrarla; solo cambiar la contraseña o cerrar sesión), sin necesidad de cerrar sesión; mientras tanto el servidor le rechaza las peticiones con 403. |
 | Deshabilitar usuario | Impide iniciar sesión y cierra sus sesiones, sin borrarlo. | No puedes deshabilitarte a ti mismo. | Personal temporalmente ausente o en revisión. Es reversible, a diferencia de eliminar. |
 | Eliminar | Borra al usuario y cierra sus sesiones. | No puedes eliminarte a ti mismo. | Personal que ya no debe tener acceso. |
 
-![Figura 15. Edición de un usuario.](img/p28-fig-016.jpg)
-
-> **Nota:** el formulario actual incluye, debajo de la contraseña, la casilla “Obligar a cambiar la contraseña al entrar”, que la captura anterior no muestra.
+![Figura 15. Edición de un usuario, con la casilla “Obligar a cambiar la contraseña al entrar”.](img/p28-fig-016.jpg)
 
 - Siempre debe quedar al menos un administrador activo: el sistema no permite eliminar, deshabilitar ni cambiar de rol al último.
 - Último acceso: la tabla muestra cuándo inició sesión cada usuario por última vez.
@@ -504,14 +525,16 @@ El servidor limita los intentos para frenar a quien pruebe contraseñas al azar.
 
 | Situación | Límite | Qué ocurre |
 |---|---|---|
-| Inicio de sesión: mismo usuario desde la misma IP | 5 fallos | Ese inicio de sesión se bloquea durante 60 segundos (“Demasiados intentos. Espera N s.”, código 429). |
+| Inicio de sesión: mismo usuario desde la misma IP | 5 fallos | Ese inicio de sesión se bloquea durante 60 segundos (“Demasiados intentos. Espera N s.”, código 429). Mayúsculas y espacios en los extremos del usuario no cambian el contador: “Admin”, “admin” y “ admin ” cuentan como el mismo. |
 | Inicio de sesión: la misma IP con cualquier usuario | Más de 20 fallos en 10 minutos | Se rechazan los intentos de esa IP (“Demasiados intentos desde esta dirección. Espera unos minutos.”, código 429) sin siquiera comprobar la contraseña. |
 | Cambio de contraseña propia | 5 fallos al escribir la contraseña actual | El servidor responde 429, cierra tu sesión (“Demasiados intentos fallidos. Se cerró la sesión.”) y debes iniciar sesión de nuevo. |
 | Cálculos de contraseña simultáneos | Máximo 4 a la vez en todo el servidor | Si el servidor está saturado responde 429 con “Servidor ocupado, intenta de nuevo en unos segundos.” Basta con reintentar. |
 
+Cada intento se cuenta **antes** de comprobar la contraseña (y se descuenta si resulta correcta). Así, quien lance muchas peticiones a la vez no consigue más intentos que el límite: las que están en curso ya cuentan como fallos pendientes.
+
 El mensaje de error del inicio de sesión no revela si el usuario existe: es el mismo para un usuario inexistente, una contraseña incorrecta o un usuario deshabilitado. Los fallos del inicio de sesión y del cambio de contraseña suman en el mismo contador. El contador de un usuario y una IP se reinicia con un acceso correcto, caduca a los 15 minutos si no llegó a bloquearse y se borra al reiniciar el servidor.
 
-> **Nota:** el límite por IP se aplica a la dirección desde la que llega la conexión. Si pones un proxy inverso delante del panel, todos los usuarios se verán con la IP del proxy y compartirán ese límite.
+> **Nota:** el límite por IP se aplica a la dirección desde la que llega la conexión. Si pones un proxy inverso delante del panel, por defecto todos los usuarios se ven con la IP del proxy y comparten ese límite. Para que cada cliente tenga su propio contador, define CENTINELA_TRUST_PROXY con la IP del proxy y cumple los requisitos de la sección 12.1.
 
 ## 9.6 Si olvidaste la contraseña de todos los administradores
 
@@ -688,15 +711,15 @@ Cada ventana indica qué muestra, qué necesita para tener datos, qué puedes co
 
 # 11. El agente de servidores remotos
 
-El agente es un programa muy pequeño (Node.js, sin dependencias) que se ejecuta en el servidor que quieres vigilar y entrega sus métricas al panel por HTTP. Es necesario únicamente para ver CPU, RAM, disco, I/O wait, ancho de banda y servicios de equipos remotos. Ping, puertos, HTTP, SSL y DNS no lo necesitan.
+El agente es un programa muy pequeño (Node.js, sin dependencias) que se ejecuta en el servidor que quieres vigilar y entrega sus métricas al panel por HTTP o, de forma opcional, por HTTPS con la huella del certificado fijada (sección 11.4). Es necesario únicamente para ver CPU, RAM, disco, I/O wait, ancho de banda y servicios de equipos remotos. Ping, puertos, HTTP, SSL y DNS no lo necesitan.
 
 ## 11.1 Instalación paso a paso
 
 1. Copia la carpeta agent/ (archivos agent.js y sysmetrics.js) al servidor remoto. Requiere Node 18+.
 2. Genera un token largo y aleatorio. En Linux: `openssl rand -hex 24`.
-3. Ejecuta el agente pasando el token por variable de entorno y fijando la IP de escucha: `CENTINELA_AGENT_TOKEN=EL_TOKEN node agent.js --port 9100 --host IP_DE_ESCUCHA`, donde IP_DE_ESCUCHA es la IP por la que te alcanza el panel. Debe imprimir “Agente Centinela escuchando en http://IP:9100 (token activo)”.
+3. Ejecuta el agente pasando el token por variable de entorno y fijando la IP de escucha: `CENTINELA_AGENT_TOKEN=EL_TOKEN node agent.js --port 9100 --host IP_DE_ESCUCHA`, donde IP_DE_ESCUCHA es la IP por la que te alcanza el panel. Debe imprimir “Agente Centinela escuchando en http://IP:9100 (token activo)” y, sin TLS, el aviso de que el token viaja en claro. Para cifrar la conexión, añade `--tls-cert` y `--tls-key` (sección 11.4).
 4. Abre el puerto 9100 en el firewall solo para la IP del servidor de monitoreo.
-5. En Centinela, edita el objetivo de ese servidor, activa “Medir CPU, RAM, disco…”, pon el mismo puerto y token y escribe los servicios a vigilar.
+5. En Centinela, edita el objetivo de ese servidor, activa “Medir CPU, RAM, disco…”, pon el mismo puerto y token y escribe los servicios a vigilar. Si el agente usa TLS, marca también “Conexión cifrada (TLS)” y pega la huella.
 6. Verifica: en unos segundos las ventanas CPU y RAM, Disco, Ancho de banda y Servicios muestran datos.
 
 En Windows (PowerShell) la variable se define antes de arrancar:
@@ -707,7 +730,7 @@ $env:CENTINELA_AGENT_TOKEN="EL_TOKEN"; node agent.js --port 9100 --host IP_DE_ES
 
 > **Consejo:** usa la variable CENTINELA_AGENT_TOKEN y no la opción `--token`: lo que se escribe en la línea de comandos es visible para cualquiera que liste los procesos del servidor (por ejemplo con `ps`). `--token` sigue funcionando, pero el agente avisa de ello al arrancar; si defines ambos, manda la variable de entorno.
 
-> **Importante:** el token viaja en claro por HTTP entre el panel y el agente. Limita el puerto del agente con el firewall a la IP del panel o usa una VLAN de gestión.
+> **Importante:** sin TLS el token viaja en claro por HTTP entre el panel y el agente. Limita el puerto del agente con el firewall a la IP del panel o usa una VLAN de gestión, o activa TLS (sección 11.4).
 
 Escribir `CENTINELA_AGENT_TOKEN=... node agent.js` en la terminal deja el token en el historial del shell. En Linux, para un uso permanente, es mejor ejecutar el agente con systemd y un `EnvironmentFile=` (archivo con permiso 600):
 
@@ -741,6 +764,8 @@ Actívalo con `sudo systemctl enable --now centinela-agent`.
 | --host | CENTINELA_AGENT_HOST | 0.0.0.0 | Interfaz donde escucha. Pon la IP por la que te alcanza el panel (recomendado). 0.0.0.0 = todas las interfaces; si no indicas nada, el agente escucha en todas y lo avisa al arrancar. 127.0.0.1 = solo local. En una máquina con varias redes, pon la IP de la red de gestión para no exponerlo en las demás. |
 | (sin opción; usa la variable) | CENTINELA_AGENT_TOKEN | (vacío) | Contraseña que debe enviar el panel. Es obligatoria si el agente no escucha en 127.0.0.1: sin token el agente se niega a arrancar. Preferible a la opción --token, que queda visible en la lista de procesos. |
 | --token | (equivale a CENTINELA_AGENT_TOKEN) | (vacío) | Igual que la variable, pero visible en la lista de procesos. Úsala solo en pruebas. |
+| --tls-cert | CENTINELA_AGENT_TLS_CERT | (vacío) | Ruta del certificado PEM. Con él el agente escucha por HTTPS. Debe indicarse junto con --tls-key: si falta uno de los dos, o no se pueden leer, el agente no arranca. |
+| --tls-key | CENTINELA_AGENT_TLS_KEY | (vacío) | Ruta de la clave privada PEM del certificado. Protégela (permiso 600). |
 
 Rutas del agente: GET /health (responde `{"ok":true}`) y GET /metrics?services=nginx,docker (métricas en JSON). Solo acepta GET y, si hay token, el encabezado Authorization: Bearer seguido del token. Un token incorrecto recibe 401. Para frenar a quien pruebe tokens, el agente permite hasta 10 fallos por minuto desde cada IP; superado el límite responde 429 (“demasiados intentos fallidos, espera un minuto”) hasta que pase el minuto. Una petición mal formada recibe 400 sin afectar al agente. Prueba manual:
 
@@ -759,9 +784,46 @@ curl -H "Authorization: Bearer EL_TOKEN" "http://IP_DEL_SERVIDOR:9100/metrics?se
 | Ancho de banda | Sí | No | No |
 | Servicios | systemctl y, si no, proceso | Estado del servicio (Get-Service) | Proceso por nombre |
 
-> **Importante:** la comunicación panel ↔ agente es HTTP sin cifrar y el token viaja en ese tráfico. Úsala dentro de una red interna, una VPN o un túnel (por ejemplo SSH), nunca por Internet abierto.
+> **Importante:** sin TLS, la comunicación panel ↔ agente es HTTP sin cifrar y el token viaja en ese tráfico. Úsala dentro de una red interna, una VPN o un túnel (por ejemplo SSH), nunca por Internet abierto; o activa TLS (sección 11.4).
 
 > **Nota:** para dejar el agente funcionando permanentemente regístralo como servicio de tu sistema (systemd, tarea programada, administrador de servicios). Centinela no lo instala por ti.
+
+## 11.4 Conexión cifrada (TLS) y huella del certificado
+
+El agente puede escuchar por HTTPS. El panel no valida la cadena del certificado (un certificado autofirmado sirve): la autenticidad la da la **huella SHA-256**, que fijas en el objetivo. Antes de enviar el token, el panel comprueba que el certificado que presenta el agente tiene esa huella; si no coincide, cierra la conexión **sin enviar el token**, por lo que un servidor falso no puede obtenerlo.
+
+**Paso 1. Generar el certificado.** En el servidor del agente, crea un certificado autofirmado (válido 825 días) y protege la clave:
+
+```
+openssl req -x509 -newkey rsa:2048 -nodes -keyout agent.key -out agent.crt -days 825 -subj "/CN=centinela-agent"
+chmod 600 agent.key
+```
+
+**Paso 2. Arrancar el agente con TLS.** Pasa el certificado y la clave, por opción o por variable de entorno:
+
+```
+CENTINELA_AGENT_TOKEN=EL_TOKEN node agent.js --port 9100 --host IP_DE_ESCUCHA --tls-cert agent.crt --tls-key agent.key
+```
+
+Equivale a definir CENTINELA_AGENT_TLS_CERT=agent.crt y CENTINELA_AGENT_TLS_KEY=agent.key. El agente debe imprimir “Agente Centinela escuchando en https://IP:9100 (token activo)” y, justo debajo, la huella:
+
+```
+Huella SHA-256 del certificado (cópiala al dashboard): AA:BB:CC:...:99
+```
+
+**Paso 3. Configurar el objetivo.** En el panel, edita el objetivo, marca “Conexión cifrada (TLS)” y pega esa huella en “Huella SHA-256 del certificado”. Es obligatoria: sin ella no se puede guardar. Escribe de nuevo el token y guarda; en unos segundos las ventanas del agente muestran datos.
+
+Mensajes que puedes ver en el objetivo (como motivo de “Agente sin respuesta”):
+
+| Mensaje | Causa | Solución |
+|---|---|---|
+| Falta la huella TLS del agente | El objetivo tiene TLS activo pero sin huella (por ejemplo, guardado por una versión anterior). No se envía el token. | Edita el objetivo y pega la huella. |
+| La huella TLS del agente no coincide (posible suplantación) | El certificado que presenta el agente no es el fijado: cambiaste el certificado del agente o hay otro equipo contestando en esa dirección. | Si renovaste el certificado, copia la huella nueva y reescribe el token. Si no lo hiciste, investiga quién responde en esa IP y puerto. |
+| El agente tardó demasiado en responder | La consulta al agente superó el plazo absoluto de 10 s. | Revisa que el agente esté activo y la red entre ambos. |
+
+> **Importante:** el token guardado se descarta cuando cambian la dirección, el puerto o la huella, o cuando se desactiva TLS (para que el secreto no viaje a otro destino o sin cifrar). Hay que volver a escribirlo en el formulario; el formulario lo avisa antes de guardar. Esto incluye renovar el certificado del agente: nueva huella, token de nuevo.
+
+> **Nota:** con TLS, el agente de un objetivo cuya dirección es 127.0.0.1 o localhost no se consulta por red (se lee directamente), así que no hace falta TLS allí. Si no pasas --tls-cert y --tls-key, el agente sigue en HTTP como antes (compatible con los objetivos existentes).
 
 # 12. Seguridad
 
@@ -770,19 +832,43 @@ curl -H "Authorization: Bearer EL_TOKEN" "http://IP_DEL_SERVIDOR:9100/metrics?se
 | Acceso al panel | Todo el panel y la API exigen inicio de sesión (capítulo 9). Sin servidor en marcha, la página abre en modo demostración con datos simulados. Por defecto escucha solo en 127.0.0.1; en contenedor, en todas las interfaces. No existe una contraseña inicial conocida: es la que defines o una aleatoria que se muestra una vez. | Define CENTINELA_ADMIN_PASSWORD o anota la aleatoria del registro y cámbiala en el primer acceso. Da a cada persona su usuario y el rol mínimo que necesita. Limita con el firewall qué redes llegan al puerto. Sin HTTPS las contraseñas viajan en claro por la red: úsalo solo en una red local de confianza o pon HTTPS delante. |
 | Contraseñas | Se guardan con scrypt y sal aleatoria en users.json (permiso 600). Mínimo 8 caracteres. Las cuentas marcadas “debe cambiar la contraseña” solo pueden consultar su sesión, cambiarla o salir (el servidor responde 403 al resto). | Protege la carpeta de datos y sus respaldos. Elimina o deshabilita a quien ya no deba entrar. Nunca compartas una cuenta. |
 | Sesiones | Cookie HttpOnly y SameSite=Strict. Caduca a las 12 h de inactividad y, en todo caso, a los 7 días. Máximo 10 sesiones por usuario y 500 en total. Se cierran al cambiar o restablecer la contraseña, deshabilitar o eliminar al usuario. Con CENTINELA_COOKIE_SECURE=1 añade el atributo Secure. | Activa CENTINELA_COOKIE_SECURE=1 solo si pones HTTPS (proxy con TLS) delante del panel. |
-| Bloqueo de intentos | 5 fallos con el mismo usuario desde la misma IP bloquean 60 s. Más de 20 fallos desde una IP en 10 minutos dan 429. Al cambiar la contraseña, 5 fallos de la actual dan 429 y cierran la sesión. Como máximo 4 cálculos de contraseña a la vez; el exceso recibe 429 (“Servidor ocupado”). | Detrás de un proxy, el límite por IP es compartido por todos los usuarios (sección 9.5). |
+| Bloqueo de intentos | 5 fallos con el mismo usuario desde la misma IP bloquean 60 s (el usuario se compara sin mayúsculas ni espacios en los extremos). Más de 20 fallos desde una IP en 10 minutos dan 429. Cada intento se cuenta antes de verificar la contraseña, así que las ráfagas en paralelo no superan el límite. Al cambiar la contraseña, 5 fallos de la actual dan 429 y cierran la sesión. Como máximo 4 cálculos de contraseña a la vez; el exceso recibe 429 (“Servidor ocupado”). | Detrás de un proxy, el límite por IP es compartido por todos los usuarios salvo que definas CENTINELA_TRUST_PROXY (sección 12.1 y 9.5). |
 | Roles | Administrador, Operador y Lector; el servidor aplica los permisos en cada petición, no solo la interfaz. | Lector para pantallas y consulta. Los roles no se limitan por organización. |
 | Hosts permitidos (DNS rebinding) | Con CENTINELA_ALLOWED_HOSTS el servidor solo acepta peticiones cuyo encabezado Host esté en la lista; las demás reciben 421, y un Host mal formado, 400. localhost, 127.0.0.1 y ::1 siempre se aceptan (el healthcheck del contenedor sigue funcionando). Con CENTINELA_AUTH=off y sin la variable solo se aceptan localhost, el nombre del equipo y sus IP. | Recomendada en una LAN para frenar el DNS rebinding: pon la IP o el nombre con el que abres el panel (por ejemplo CENTINELA_ALLOWED_HOSTS=192.168.1.20,centinela.lan en el archivo .env del contenedor). |
 | Alcance de las mediciones | El servidor hace ping, conexiones TCP y HTTP a lo que se le indique. | No lo expongas a redes no confiables: alguien podría usarlo para sondear tu red interna. |
-| Tokens de agentes | Se guardan en data/targets.json y data/orgs/<id>/targets.json en texto plano (en Linux el archivo se crea con permiso 600). El navegador nunca los recibe. El token se descarta si cambia la dirección o el puerto del objetivo. | Protege la carpeta data/, no la subas a repositorios ni la compartas; usa un token distinto por servidor. La exportación del panel no los incluye. |
-| Agente | Exige token si escucha fuera de 127.0.0.1; el token se pasa por CENTINELA_AGENT_TOKEN; limita a 10 fallos por minuto y por IP (429); solo atiende GET. | El token viaja en claro por HTTP: escucha solo en la IP necesaria (--host), limita el puerto con el firewall a la IP del panel o usa una VLAN de gestión. Para no dejar el token en el historial del shell, ejecútalo con systemd y EnvironmentFile= (sección 11.1). |
+| Tokens de agentes | Se guardan en data/targets.json y data/orgs/<id>/targets.json en texto plano (en Linux el archivo se crea con permiso 600). El navegador nunca los recibe. El token se descarta si cambia la dirección, el puerto o la huella TLS del objetivo, o si se desactiva TLS. | Protege la carpeta data/, no la subas a repositorios ni la compartas; usa un token distinto por servidor. La exportación del panel no los incluye. |
+| Agente | Exige token si escucha fuera de 127.0.0.1; el token se pasa por CENTINELA_AGENT_TOKEN; limita a 10 fallos por minuto y por IP (429); solo atiende GET. Opcionalmente escucha por HTTPS (--tls-cert y --tls-key) y el panel solo envía el token si la huella SHA-256 del certificado coincide con la fijada en el objetivo. | Sin TLS el token viaja en claro por HTTP: escucha solo en la IP necesaria (--host), limita el puerto con el firewall a la IP del panel o usa una VLAN de gestión; mejor, activa TLS con huella fijada (sección 11.4). Para no dejar el token en el historial del shell, ejecútalo con systemd y EnvironmentFile= (sección 11.1). |
+| Proxy inverso (IP del cliente) | Por defecto X-Forwarded-For se ignora. Con CENTINELA_TRUST_PROXY, solo las conexiones que llegan desde las IP listadas se interpretan con esa cabecera. | Sección 12.1. |
 | Archivos de datos | La carpeta de datos se crea con permiso 700 y sus archivos con 600; cada guardado se escribe a disco antes de actualizar la memoria. | Conserva esos permisos al restaurar un respaldo. |
 | Archivos expuestos | El servidor solo publica index.html, assets/ y js/. data/, server/ y agent/ nunca se sirven por HTTP. | — |
 | Estado público | GET /api/health responde solo que el servidor está vivo, el modo y si exige inicio de sesión; no incluye la versión. El resto de la API exige sesión, y los datos del equipo servidor solo se entregan a administradores. | — |
 | Comandos del sistema | Los hosts se validan estrictamente y ping/traceroute se ejecutan sin intérprete de comandos, por lo que no se pueden inyectar instrucciones. Los nombres de servicio deben empezar con letra o número. | — |
 | Protección del navegador | Las peticiones POST, PUT y DELETE exigen Content-Type: application/json (si no, 415) y, si el navegador indica el origen, que sea el propio servidor (defensa contra CSRF); la política CSP solo permite scripts propios; los textos de usuario y los valores del agente y de HTTP se escapan antes de mostrarse. | Si automatizas la API con curl u otro cliente, envía siempre la cabecera Content-Type: application/json, incluso sin cuerpo. |
 | Certificados al medir | El monitor no rechaza certificados inválidos para poder informarlos (vencido, autofirmado). | Es intencional: la medición no transmite datos sensibles. |
-| Límites | Cuerpo de solicitud ≤ 512 KB, 50 organizaciones, 500 objetivos por organización, 200 usuarios, 3 traceroutes simultáneos (1 por usuario), 16 mediciones simultáneas (ajustable con CENTINELA_CONCURRENCY), plazo de 120 s por verificación (CENTINELA_CHECK_TIMEOUT_MS) y flujos en vivo: 5 por sesión, 15 por usuario y 200 en total. | — |
+| Límites | Cuerpo de solicitud ≤ 512 KB, 50 organizaciones, 500 objetivos por organización, 200 usuarios, 3 traceroutes simultáneos (1 por usuario), 16 mediciones simultáneas (ajustable con CENTINELA_CONCURRENCY), plazo de 120 s por verificación (CENTINELA_CHECK_TIMEOUT_MS; una sonda huérfana se libera a los 2 × ese plazo), plazo de 10 s por consulta al agente, “verificar ahora” con un mínimo de 5 s por objetivo y un cupo de 3 simultáneas y 30 por minuto por usuario, y flujos en vivo: 5 por sesión, 15 por usuario y 200 en total. | — |
+
+## 12.1 Proxy inverso y la IP real del cliente (CENTINELA_TRUST_PROXY)
+
+Si pones un proxy inverso (nginx, Apache, Traefik) delante del panel, Centinela ve todas las conexiones como si vinieran del proxy. Consecuencias: el bloqueo de intentos por IP, el límite de flujos en vivo sin autenticación y el cupo de “verificar ahora” sin autenticación se comparten entre todos. Con CENTINELA_TRUST_PROXY el servidor usa la IP real de cada cliente.
+
+Cómo decide la IP:
+
+- Con la variable vacía (lo normal) X-Forwarded-For se ignora: nadie puede falsificar su IP con esa cabecera.
+- Si la conexión llega desde una IP de la lista, el servidor lee X-Forwarded-For de derecha a izquierda y usa la primera entrada válida que no sea un proxy de confianza. Las entradas que no son IP se descartan; si no queda ninguna, usa la IP de la conexión.
+- Si la conexión no viene de una IP de la lista, X-Forwarded-For se ignora aunque exista.
+- Se aceptan entradas con puerto (10.0.0.7:5555) e IPv6 entre corchetes ([2001:db8::1]:443).
+
+Formato: IP separadas por comas, por ejemplo `CENTINELA_TRUST_PROXY=127.0.0.1,10.0.0.5`. No admite rangos CIDR ni nombres; una entrada que no sea una IP se ignora y el servidor avisa al arrancar (`CENTINELA_TRUST_PROXY: entrada ignorada (no es una IP): ...`).
+
+> **Importante:** tres requisitos del proxy. Si no se cumplen, la protección se debilita. (1) El proxy **debe añadir** la IP del cliente al **final** de X-Forwarded-For, sin reemplazar lo recibido; en nginx: `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`. (2) El puerto de Centinela **no debe ser accesible saltándose el proxy** (firewall, o escucha solo en 127.0.0.1). (3) El proxy debe **conservar la cabecera Host** original (nginx: `proxy_set_header Host $host;`) para que CENTINELA_ALLOWED_HOSTS siga funcionando.
+
+Ejemplo de arranque detrás de nginx en el mismo equipo:
+
+```
+CENTINELA_TRUST_PROXY=127.0.0.1 CENTINELA_COOKIE_SECURE=1 CENTINELA_ALLOWED_HOSTS=centinela.lan node server/server.js
+```
+
+> **Nota:** en contenedor, compose.yml ya pasa CENTINELA_TRUST_PROXY; defínela en .env. En la lista pon la IP con la que Centinela ve al proxy (la de origen de la conexión), que dentro de un contenedor no suele ser 127.0.0.1.
 
 # 13. Archivos de datos y API
 
@@ -819,7 +905,8 @@ La carpeta se crea con permiso 700 y los archivos con 600 (Linux/macOS).
     "http": { "expectedStatus": "200-399", "timeoutMs": 8000,
               "method": "GET", "keyword": "", "browser": false },   // null si kind = "host"
     "ssl": true,
-    "agent": { "enabled": false, "port": 9100, "token": "", "services": [] }
+    "agent": { "enabled": false, "port": 9100, "token": "", "services": [],
+               "tls": false, "fingerprint": "" }   // con tls = true la huella es obligatoria ("AA:BB:...", 64 hex)
   }
 }
 ```
@@ -838,10 +925,10 @@ El propio panel usa esta API, y puedes usarla para integrarte con otros sistemas
 | GET, POST /api/orgs | Listar organizaciones / crear una. Cuerpo: {"name","color","note"}. |
 | PUT, DELETE /api/orgs/{id} | Editar o eliminar una organización (Host no se puede eliminar). |
 | GET /api/stream | Flujo en vivo (Server-Sent Events) con los eventos result, event, targets, orgs y settings. Trae las mediciones y alertas de todas las organizaciones. Hasta 5 flujos por sesión y 15 por usuario (por IP con CENTINELA_AUTH=off); al superarlos se expulsa el más antiguo, que queda en pausa hasta que se reconecte con un clic o al volver a ser visible. El límite global es de 200 (429). |
-| GET, POST /api/targets?org={id} | Listar objetivos de una organización / crear uno (devuelve 201 o 400 con la lista de errores). Sin org = Host. |
+| GET, POST /api/targets?org={id} | Listar objetivos de una organización / crear uno (devuelve 201 o 400 con la lista de errores). Sin org = Host. En checks.agent, tls (booleano) y fingerprint (huella SHA-256); con tls en true la huella es obligatoria (400 si falta o no es válida). |
 | PUT /api/targets?org={id} | Reemplazar todos los objetivos de la organización (importación). Cuerpo: {"targets":[…]}. |
 | PUT, DELETE /api/targets/{id} | Editar o eliminar un objetivo (404 si no existe). |
-| POST /api/targets/{id}/check | Medir ahora ese objetivo y devolver el resultado. Si excede el plazo global (CENTINELA_CHECK_TIMEOUT_MS) responde 200 con el objetivo DOWN y el motivo “La verificación excedió el tiempo máximo”; si ya hay una verificación en curso de ese objetivo, 409. |
+| POST /api/targets/{id}/check | Medir ahora ese objetivo y devolver el resultado. Si excede el plazo global (CENTINELA_CHECK_TIMEOUT_MS) responde 200 con el objetivo DOWN y el motivo “La verificación excedió el tiempo máximo”; si ya hay una verificación en curso de ese objetivo, 409. Responde 429 con la cabecera Retry-After si pasaron menos de 5 s desde la última verificación manual de ese objetivo o si el usuario (la IP, sin autenticación) ya tiene 3 simultáneas o 30 en el último minuto (“Demasiadas verificaciones manuales; espera un momento”). |
 | POST /api/traceroute | Traceroute. Cuerpo: {"targetId":"…"} o {"address":"host"} (los Lectores solo con targetId). Responde 429 si ya tienes uno en curso o hay 3 en total. |
 | GET, PUT /api/settings | Leer o guardar ajustes y umbrales. Si hay valores no válidos (fuera de rango, aviso mayor o igual que el crítico, avisos en 0), responde 400 con la lista errors. |
 | GET, PUT /api/layout?org={id} | Leer o guardar la disposición del Panel de una organización. |
@@ -888,7 +975,7 @@ docker compose down -v                  # detener Y BORRAR los datos (usuarios, 
 | read_only y tmpfs: /tmp | activado | El sistema de archivos del contenedor es de solo lectura; solo se puede escribir en /tmp (memoria) y en el volumen /data. |
 | mem_limit y pids_limit | 512m / 256 | Tope de memoria (512 MB) y de procesos (256) del contenedor. Súbelos solo si monitoreas cientos de objetivos y lo ves justo. |
 | sysctls: net.ipv4.ping_group_range | "0 65535" | Permite ICMP al usuario sin privilegios con el que corre Centinela dentro del contenedor. Se usa 65535 (y no 2147483647) para que también funcione con Podman sin root. Si tu motor rechaza este parámetro, quítalo: normalmente basta con NET_RAW. |
-| restart | unless-stopped | El contenedor se levanta solo tras un reinicio del servidor. |
+| restart | unless-stopped | El contenedor se levanta solo tras un reinicio del servidor. Con Podman sin root requiere activar podman-restart.service (sección 14.5). |
 | healthcheck | cada 30 s | Consulta /api/health; el motor marca el contenedor como saludable o no. |
 
 > **Nota:** en la red de un contenedor, la comprobación de salud y el panel usan el puerto interno 9595. Si publicas el panel con otro puerto en "ports", el healthcheck no cambia.
@@ -910,13 +997,14 @@ docker compose down -v                  # detener Y BORRAR los datos (usuarios, 
 | Ping y traceroute | Necesitan ICMP desde el contenedor. Con NET_RAW y el sysctl del compose deben funcionar en Docker y en Podman, con o sin root, también con el endurecimiento completo. | Si el panel dice “Ping no disponible”, revisa los registros del contenedor y estos dos parámetros. |
 | Red del contenedor | Sale a tu red a través de la red del motor (NAT). Los equipos de la LAN y los de Internet se alcanzan normalmente. | En Linux, con network_mode: host el contenedor usa directamente la red del servidor (entonces 127.0.0.1 sí es el anfitrión y se ignora “ports”). No existe en Docker Desktop de Windows o Mac. |
 | Windows y Mac (Docker Desktop) | Funciona, pero el contenedor corre dentro de una máquina virtual. | Para uso permanente en producción es preferible un servidor Linux. |
-| Proxy inverso | No es necesario: el propio panel pide usuario y contraseña. | Solo si quieres HTTPS interno (Apache, nginx, Traefik): desactiva el almacenamiento en búfer de /api/stream, que es el flujo en vivo, y añade CENTINELA_COOKIE_SECURE=1 y CENTINELA_ALLOWED_HOSTS con el nombre público del panel. El proxy debe conservar la cabecera Host original (en nginx: proxy_set_header Host $host); si la reescribe a 127.0.0.1, el filtro de Host deja de proteger. |
+| Proxy inverso | No es necesario: el propio panel pide usuario y contraseña. | Solo si quieres HTTPS interno (Apache, nginx, Traefik): desactiva el almacenamiento en búfer de /api/stream, que es el flujo en vivo, y añade CENTINELA_COOKIE_SECURE=1 y CENTINELA_ALLOWED_HOSTS con el nombre público del panel. El proxy debe conservar la cabecera Host original (en nginx: proxy_set_header Host $host); si la reescribe a 127.0.0.1, el filtro de Host deja de proteger. Para que el bloqueo de intentos use la IP real de cada cliente, define CENTINELA_TRUST_PROXY (sección 12.1), que compose.yml ya pasa al contenedor desde .env. |
 | Sin inicio de sesión | Con CENTINELA_AUTH=off el servidor solo acepta peticiones con Host de su propio equipo. | Si por algún motivo lo desactivas en contenedor (solo entornos aislados), define también CENTINELA_ALLOWED_HOSTS con la IP o el nombre con que abres el panel. |
 
 ## 14.5 Podman
 
 - Los mismos archivos sirven: `podman-compose up -d --build` o `podman compose up -d --build`.
-- Para que arranque con el servidor, genera una unidad de systemd con `podman generate systemd` o usa Quadlet; en modo sin root habilita `loginctl enable-linger` para tu usuario.
+- Para que arranque con el servidor, genera una unidad de systemd con `podman generate systemd` o usa Quadlet; en modo sin root habilita `loginctl enable-linger` para tu usuario. Con `restart: unless-stopped` del compose.yml, en Podman sin root también debes activar el servicio de usuario que levanta los contenedores al arrancar el equipo (viene deshabilitado): `systemctl --user enable podman-restart.service` y `loginctl enable-linger $USER`.
+- **No uses `podman restart centinela`** en Podman sin root: en el equipo de pruebas falla con `rootless netns: kill network process: permission denied` y deja el contenedor **detenido** (no es un fallo de Centinela). Reinicia con `podman-compose -p <proyecto> restart` (el contenedor queda healthy y /api/health responde) o con `podman stop centinela` seguido de `podman start centinela`. Si por error quedó detenido, `podman start centinela` lo levanta.
 - En modo sin root, los puertos por debajo del 1024 están restringidos; el 9595 no tiene problema.
 - Si Podman rechaza sysctls, quita ese bloque y asegúrate de mantener NET_RAW.
 - Con Podman sin root el valor de ping_group_range debe ser "0 65535", el que trae el compose.yml; con el valor antiguo 2147483647 el contenedor no arrancaba (“Invalid argument”).
@@ -931,6 +1019,8 @@ docker compose down -v                  # detener Y BORRAR los datos (usuarios, 
 | “EACCES: permission denied” al guardar en /data | La carpeta montada no permite escribir al usuario node (uid 1000). | Cambia su propietario: chown 1000:1000 ./datos (o usa el volumen nombrado). |
 | El contenedor aparece “unhealthy” | El servidor no arrancó; suele ser un JSON de /data mal escrito. | Mira docker compose logs: indica el archivo a corregir. |
 | No sé la contraseña del administrador | No definiste CENTINELA_ADMIN_PASSWORD en .env y no anotaste la aleatoria. | Búscala en el registro de la primera ejecución (docker logs centinela). Si ya no está, borra users.json del volumen y reinicia (sección 9.6). |
+| Tras `podman restart centinela` el contenedor quedó detenido (“rootless netns: kill network process: permission denied”) | Fallo de Podman sin root en ese tipo de equipo, no de Centinela. | `podman start centinela` y, para reiniciar, usa `podman-compose -p <proyecto> restart` o `podman stop` + `podman start` (sección 14.5). |
+| Tras reiniciar el servidor el contenedor no se levanta solo | `podman-restart.service` del usuario está deshabilitado (Podman sin root). | `systemctl --user enable podman-restart.service` y `loginctl enable-linger $USER` (sección 14.5). |
 | Cambié CENTINELA_ADMIN_PASSWORD y no entra con la nueva | Esa variable solo crea el primer usuario. | Entra con la contraseña vigente y cámbiala en el panel, o consulta el capítulo 9 (“Si olvidaste la contraseña”). |
 
 # 15. Recetas: configuraciones por situación
@@ -1067,7 +1157,16 @@ Cada receta indica cómo dar de alta el objetivo y qué ventanas conviene tener 
 | Un servicio sano aparece DOWN por HTTP 401, 403 o 404 | Ese código no está entre los esperados. | Edita “Códigos HTTP esperados” (ej. 200-399,401) o apunta a una URL pública de salud. |
 | Certificado “no confiable”, servicio DEGRADADO | Certificado autofirmado, de una CA interna o con la cadena incompleta. | Instala la cadena completa en el servidor, o acepta el aviso si es un entorno interno conocido. |
 | “Agente sin respuesta (conexión rechazada / tiempo agotado)” | El agente no corre, el puerto es otro o el firewall lo bloquea. | Comprueba que el agente esté activo, el puerto del objetivo y la regla de firewall hacia el servidor de monitoreo. |
-| “Agente sin respuesta (token rechazado por el agente)” | El token del objetivo no coincide con el del agente, o se descartó al cambiar la dirección o el puerto del objetivo. | Edita el objetivo y escribe el token correcto (vacío conserva el anterior, salvo que hayas cambiado la dirección o el puerto). |
+| “Agente sin respuesta (token rechazado por el agente)” | El token del objetivo no coincide con el del agente, o se descartó al cambiar la dirección, el puerto o la huella, o al desactivar TLS. | Edita el objetivo y escribe el token correcto (vacío conserva el anterior, salvo que hayas cambiado alguno de esos datos). |
+| “Falta la huella TLS del agente” | El objetivo tiene “Conexión cifrada (TLS)” sin huella; el token no se envía. | Pega la huella SHA-256 que imprime el agente al arrancar (sección 11.4). |
+| “La huella TLS del agente no coincide (posible suplantación)” | El certificado del agente cambió (renovación o reinstalación) o responde otro equipo en esa dirección. | Si fue un cambio tuyo, copia la huella nueva en el objetivo y reescribe el token; si no, investiga quién contesta en esa IP y puerto (sección 11.4). |
+| “El agente tardó demasiado en responder” | La consulta al agente pasó el plazo absoluto de 10 s (agente o red muy lentos, o algo que acepta la conexión y no contesta). | Revisa el agente y la red entre ambos servidores. |
+| El agente con TLS no arranca (“No se pudo cargar el certificado o la clave TLS”) o pide indicar cert y clave juntos | Falta --tls-cert o --tls-key, la ruta es incorrecta o la clave no corresponde al certificado. | Indica los dos archivos y comprueba que se generaron juntos (sección 11.4). |
+| “verificar ahora” responde 429 (“Espera unos segundos…” o “Demasiadas verificaciones manuales; espera un momento”) | Menos de 5 s desde la última verificación manual de ese objetivo, o más de 3 simultáneas / 30 por minuto por usuario. | Espera el tiempo de la cabecera Retry-After y vuelve a intentarlo (sección 3.5). |
+| Todos los usuarios detrás del proxy se bloquean a la vez | El servidor ve a todos con la IP del proxy. | Define CENTINELA_TRUST_PROXY con la IP del proxy y cumple los requisitos de la sección 12.1. |
+| Al arrancar: “CENTINELA_TRUST_PROXY: entrada ignorada (no es una IP)” | La lista contiene un CIDR, un nombre u otro valor que no es una IP. | Escribe solo IP literales separadas por comas (no se admiten rangos). |
+| La consola muestra “[scheduler] verificación huérfana: …” | Una verificación pasó el plazo global y su sonda sigue viva; mientras tanto baja la capacidad de mediciones simultáneas. | Revisa el destino o el agente del objetivo indicado. Se libera sola a los 2 × CENTINELA_CHECK_TIMEOUT_MS (sección 3.5). |
+| Un usuario a quien obligué a cambiar la contraseña ve la ventana “Debes cambiar tu contraseña” con el panel ya abierto | Comportamiento esperado: el servidor le rechaza las peticiones (403) hasta que la cambie. | Debe escribir su contraseña actual y una nueva (sección 9.3). |
 | El agente responde 429 (“demasiados intentos fallidos, espera un minuto”) | Hubo más de 10 peticiones con token incorrecto en un minuto desde esa IP. | Corrige el token del objetivo y espera un minuto. |
 | El agente no arranca: “exige --token (o CENTINELA_AGENT_TOKEN)” | Escucha fuera de 127.0.0.1 sin token. | Define CENTINELA_AGENT_TOKEN antes de ejecutarlo. |
 | Los ajustes no se guardan y aparece una lista de errores | Un aviso es mayor o igual que el crítico (en SSL, menor o igual), hay un aviso en 0 o un valor fuera de rango. | Corrige los valores que indica la lista (sección 8.2). Un campo vacío no es un error: conserva el valor anterior. |
@@ -1087,8 +1186,8 @@ Cada receta indica cómo dar de alta el objetivo y qué ventanas conviene tener 
 - Un solo punto de medición: todo se mide desde el servidor donde corre Centinela.
 - Ping de 4 paquetes por ciclo: la pérdida y el jitter tienen resolución limitada (ver sección 8.2). Para análisis finos usa la ventana de Traceroute con “Repetir”.
 - Métricas dependientes del sistema: I/O wait y ancho de banda solo en Linux; el traceroute depende de los comandos del sistema.
-- Agente sin cifrado: usar solo en redes internas, VPN o túneles.
-- Límite por IP detrás de un proxy: el bloqueo por intentos fallidos se calcula por la IP de la conexión, así que todos los usuarios de un proxy la comparten.
+- Agente: el cifrado TLS es opcional. Sin él, usa el agente solo en redes internas, VPN o túneles. Con TLS la autenticidad se basa en la huella fijada del certificado (no en una autoridad certificadora) y hay que actualizarla cuando se renueva el certificado.
+- Límite por IP detrás de un proxy: por defecto el bloqueo por intentos fallidos se calcula por la IP de la conexión, así que todos los usuarios de un proxy la comparten. CENTINELA_TRUST_PROXY lo resuelve (solo IP literales, sin CIDR) si el proxy cumple los requisitos de la sección 12.1.
 - Capacidad: hasta 50 organizaciones, 500 objetivos por organización, 200 usuarios, 16 mediciones simultáneas (ajustable) y 60 ventanas por Panel.
 - No incluye SNMP ni lectura de equipos de red por otros protocolos: se miden por ping, puertos y HTTP.
 
@@ -1115,6 +1214,9 @@ Cada receta indica cómo dar de alta el objetivo y qué ventanas conviene tener 
 | Sesión | Periodo en que tu navegador permanece identificado tras iniciar sesión; se guarda en una cookie y caduca por inactividad (12 h) o a los 7 días. |
 | DNS rebinding | Ataque en el que un nombre de internet se hace apuntar a un equipo de tu red local; se frena con CENTINELA_ALLOWED_HOSTS. |
 | CSRF | Ataque que hace que tu navegador envíe peticiones al panel sin que lo sepas; se frena exigiendo Content-Type: application/json y comprobando el origen. |
+| Huella (fingerprint) | Resumen SHA-256 del certificado TLS del agente (64 caracteres hexadecimales). El panel la compara antes de enviar el token para confirmar que habla con el agente correcto. |
+| Proxy de confianza | Proxy inverso cuya IP figura en CENTINELA_TRUST_PROXY; solo de él se acepta la cabecera X-Forwarded-For para conocer la IP real del cliente. |
+| Verificación huérfana | Verificación cuya sonda sigue viva después de vencer el plazo global; reduce la capacidad de mediciones hasta que termina o se libera (2 × el plazo). |
 
 # Anexo A. Referencia rápida de ventanas
 
@@ -1155,3 +1257,47 @@ La cuadrícula tiene 12 columnas; cada fila mide 34 px y el espacio entre ventan
 | Red | Ancho de banda (bps) | Ancho de banda | Agente (Linux) |
 | Red | Traceroute por saltos | Análisis de ruta | Botón Ejecutar |
 | General | Estado UP / DEGRADADO / DOWN | Resumen; Estado de servicios; Eventos | Automático |
+
+# Anexo C. Variables de entorno
+
+| Variable | Dónde | Por defecto | Sección |
+|---|---|---|---|
+| PORT | Servidor | 8080 (9595 en contenedor) | 2.3 |
+| HOST | Servidor | 127.0.0.1 (0.0.0.0 en contenedor) | 2.3 |
+| CENTINELA_DATA | Servidor | carpeta data/ del proyecto | 2.3 |
+| CENTINELA_AUTH | Servidor | activada (off la desactiva) | 2.3 |
+| CENTINELA_ADMIN_USER | Servidor | administrador | 2.3, 9.1 |
+| CENTINELA_ADMIN_PASSWORD | Servidor | vacía: aleatoria | 2.3, 9.1 |
+| CENTINELA_ALLOWED_HOSTS | Servidor | vacía | 2.3, 12 |
+| CENTINELA_COOKIE_SECURE | Servidor | desactivado (1 lo activa) | 2.3, 9.4 |
+| CENTINELA_CONCURRENCY | Servidor | 16 (2 a 64) | 2.3, 7.4 |
+| CENTINELA_CHECK_TIMEOUT_MS | Servidor | 120000 (mínimo 5000) | 2.3, 3.5 |
+| CENTINELA_TRUST_PROXY | Servidor | vacía: X-Forwarded-For se ignora | 2.3, 12.1 |
+| CENTINELA_AGENT_TOKEN | Agente | vacío | 11.2 |
+| CENTINELA_AGENT_HOST | Agente | 0.0.0.0 | 11.2 |
+| CENTINELA_AGENT_PORT | Agente | 9100 | 11.2 |
+| CENTINELA_AGENT_TLS_CERT | Agente | vacío (HTTP) | 11.2, 11.4 |
+| CENTINELA_AGENT_TLS_KEY | Agente | vacío (HTTP) | 11.2, 11.4 |
+
+# Anexo D. Mensajes de error y códigos de respuesta
+
+| Mensaje o código | Dónde aparece | Sección |
+|---|---|---|
+| 409 “Ya hay una verificación en curso para este objetivo” | “Verificar ahora” | 3.5 |
+| 429 “Espera unos segundos antes de volver a verificar este objetivo” (Retry-After) | “Verificar ahora”: menos de 5 s en ese objetivo | 3.5 |
+| 429 “Demasiadas verificaciones manuales; espera un momento” (Retry-After) | “Verificar ahora”: 3 simultáneas o 30 por minuto por usuario | 3.5 |
+| “La verificación excedió el tiempo máximo” | Motivo de DOWN | 3.5 |
+| “Con TLS activado, la huella SHA-256 del certificado del agente es obligatoria” | Guardar un objetivo con TLS sin huella | 6.3 |
+| “Huella TLS no válida (64 caracteres hexadecimales)” | Guardar un objetivo con una huella mal escrita | 6.3 |
+| “Falta la huella TLS del agente” | Motivo de “Agente sin respuesta” | 11.4 |
+| “La huella TLS del agente no coincide (posible suplantación)” | Motivo de “Agente sin respuesta” | 11.4 |
+| “El agente tardó demasiado en responder” | Motivo de “Agente sin respuesta” (plazo de 10 s) | 11.4 |
+| “token rechazado por el agente” | Motivo de “Agente sin respuesta” (401 del agente) | 16 |
+| “Demasiados intentos. Espera N s.” (429) | Inicio de sesión | 9.5 |
+| “Demasiados intentos desde esta dirección. Espera unos minutos.” (429) | Inicio de sesión | 9.5 |
+| “Servidor ocupado, intenta de nuevo en unos segundos.” (429) | Inicio de sesión y cambio de contraseña | 9.5 |
+| 403 con mustChange | Cualquier ruta, mientras la contraseña deba cambiarse | 9.1 |
+| 421 “Host no permitido” | Cabecera Host fuera de CENTINELA_ALLOWED_HOSTS | 12 |
+| 415 Content-Type | POST, PUT o DELETE sin application/json | 13.3 |
+| “CENTINELA_TRUST_PROXY: entrada ignorada (no es una IP)” | Consola del servidor al arrancar | 12.1 |
+| “[scheduler] verificación huérfana: …” | Consola del servidor | 3.5 |

@@ -3,12 +3,14 @@
   'use strict';
   var U = NOC.util, ui = NOC.ui, store = NOC.store;
 
-  var TH = [
-    ['latency', 'Latencia (ms)', 'latencyWarnMs', 'latencyCritMs'], ['loss', 'Pérdida de paquetes (%)', 'lossWarnPct', 'lossCritPct'],
-    ['jitter', 'Jitter (ms)', 'jitterWarnMs', 'jitterCritMs'], ['ttfb', 'TTFB HTTP (ms)', 'ttfbWarnMs', 'ttfbCritMs'],
-    ['ssl', 'SSL: días restantes (menor = peor)', 'sslWarnDays', 'sslCritDays'], ['disk', 'Disco usado (%)', 'diskWarnPct', 'diskCritPct'],
-    ['cpu', 'CPU (%)', 'cpuWarnPct', 'cpuCritPct'], ['mem', 'Memoria RAM (%)', 'memWarnPct', 'memCritPct'], ['io', 'I/O wait (%)', 'ioWaitWarnPct', 'ioWaitCritPct']
-  ];
+  var T = NOC.Thresholds; // pares aviso/crítico y su orden, compartidos con el servidor (js/shared/thresholds.js)
+  // Filas del formulario: [id del campo, etiqueta con unidad, clave de aviso, clave crítica, ¿invertido (SSL)?].
+  // Las claves y el orden salen del módulo compartido; aquí solo viven los textos con unidad y el id del campo en el DOM.
+  var UI_LABELS = { latency: ['latency', 'Latencia (ms)'], loss: ['loss', 'Pérdida de paquetes (%)'], jitter: ['jitter', 'Jitter (ms)'],
+                    ttfb: ['ttfb', 'TTFB HTTP (ms)'], ssl: ['ssl', 'SSL: días restantes (menor = peor)'], disk: ['disk', 'Disco usado (%)'],
+                    cpu: ['cpu', 'CPU (%)'], mem: ['mem', 'Memoria RAM (%)'], ioWait: ['io', 'I/O wait (%)'] };
+  // Si a PAIRS le falta una etiqueta aquí, se usa p.label de respaldo en vez de fallar.
+  var TH = T.PAIRS.map(function (p) { var l = UI_LABELS[p.id]; return [l ? l[0] : p.id, l ? l[1] : (p.label || p.id), p.warn, p.crit, p]; });
 
   function render(root) {
     var s = store.state.settings, th = s.thresholds, live = store.state.mode === 'live', sv = store.state.server;
@@ -27,7 +29,8 @@
         : '<p>' + W2('degraded', 'DEMOSTRACIÓN') + '</p><p class="muted" style="margin-top:8px">Estás viendo datos <b>simulados</b> guardados en este navegador. Para medir de verdad, inicia el servidor y abre la dirección que muestra:</p><p style="margin-top:8px"><code>node server/server.js</code></p><button type="button" class="btn btn--sm" data-reset-demo style="margin-top:10px">Borrar datos de demostración</button>') + '</div></div>' +
       '<div class="panel"><div class="panel-head"><h2>Cómo medir servidores remotos</h2></div><div class="panel-body"><ol class="help-list">' +
         '<li>Copia la carpeta <code>agent/</code> al servidor (solo necesita Node 18+).</li><li>Ejecuta <code>CENTINELA_AGENT_TOKEN=UN_SECRETO_LARGO node agent.js --port 9100 --host IP_DEL_SERVIDOR</code>.</li>' +
-        '<li>Abre el puerto solo para la IP de este panel.</li><li>Edita el objetivo, activa “Salud del servidor” y pon el mismo puerto y token.</li></ol></div></div>' +
+        '<li>Opcional, recomendado fuera de la red local: cifra con TLS añadiendo <code>--tls-cert</code> y <code>--tls-key</code>; el agente imprime la huella SHA-256 del certificado al arrancar y, con TLS, esa huella es obligatoria en el objetivo.</li>' +
+        '<li>Abre el puerto solo para la IP de este panel.</li><li>Edita el objetivo, activa “Salud del servidor” y pon el mismo puerto y token. Con TLS, marca “Conexión cifrada” y pega la huella (obligatoria); si la cambias después, hay que volver a escribir el token.</li></ol></div></div>' +
       '</div></div>';
 
     var form = root.querySelector('#sf');
@@ -57,7 +60,7 @@
       TH.forEach(function (r) {
         var w = out.thresholds[r[2]], c = out.thresholds[r[3]];
         if (w == null || c == null) return;
-        if (r[0] === 'ssl' ? w <= c : w >= c) errs.push(r[0] === 'ssl' ? 'SSL: el aviso (' + w + ' días) debe ser mayor que el crítico (' + c + ' días).' : r[1] + ': el aviso (' + w + ') debe ser menor que el crítico (' + c + ').');
+        if (!T.isOrdered(r[4], w, c)) errs.push(r[4].inverted ? 'SSL: el aviso (' + w + ' días) debe ser mayor que el crítico (' + c + ' días).' : r[1] + ': el aviso (' + w + ') debe ser menor que el crítico (' + c + ').');
       });
       if (errs.length) {
         box.innerHTML = '<div class="errors" role="alert"><ul>' + errs.map(function (x) { return '<li>' + U.esc(x) + '</li>'; }).join('') + '</ul></div>';

@@ -5,6 +5,37 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). V
 
 ## [Sin publicar]
 
+## [2.1.0] - 2026-11-18
+
+### Agregado
+- Conexión cifrada (TLS) entre el panel y el agente remoto:
+  - El agente se arranca con `--tls-cert` y `--tls-key` (o `CENTINELA_AGENT_TLS_CERT` y `CENTINELA_AGENT_TLS_KEY`) y muestra al arrancar la huella SHA-256 de su certificado.
+  - En el objetivo se marca "Conexión cifrada (TLS)" y se pega esa huella, que es obligatoria.
+  - Si la huella no coincide, el token no se envía.
+- `CENTINELA_TRUST_PROXY`: lista de IPs de proxies de confianza. Con ella, los límites de intentos se aplican a la IP real del cliente (`X-Forwarded-For`) y no a la del proxy.
+- Integración continua con GitHub Actions: pruebas en Node 18, 20, 22 y 24, más construcción de la imagen.
+- 127 pruebas automáticas nuevas: 334 en total.
+
+### Cambiado
+- La verificación manual de un objetivo (`POST /api/targets/:id/check`) tiene límites:
+  - una cada 5 s por objetivo;
+  - como máximo 3 simultáneas y 30 por minuto por usuario.
+  
+  Al superarlos responde 429 con `Retry-After`.
+- El token guardado de un agente también se descarta si cambia la huella TLS o se desactiva TLS. Hay que volver a escribirlo.
+- Una verificación colgada que supera dos veces el plazo máximo se da por terminada. Mientras sigue colgada, reduce temporalmente la capacidad de verificación, para no superar el límite de concurrencia.
+- El intento de inicio de sesión se cuenta antes de comprobar la contraseña. Las variantes del nombre de usuario con mayúsculas o espacios comparten el mismo contador.
+
+### Corregido
+- Si un administrador obliga a cambiar la contraseña de un usuario con sesión abierta, su pestaña muestra el cambio obligatorio en lugar de reintentar la conexión en bucle.
+- La interfaz refleja un cambio de rol al reconectar, sin necesidad de recargar.
+- Un agente que responde muy lento ya no bloquea indefinidamente la verificación: el plazo máximo es de 10 s.
+
+### Seguridad
+- El token del agente ya no puede viajar en claro por la red local si se usa TLS. Con la huella fijada, un equipo que suplante al agente no lo recibe.
+- Las entradas de `X-Forwarded-For` y de `CENTINELA_TRUST_PROXY` que no son IPs válidas se ignoran.
+- La CI se ejecuta con permisos de solo lectura y con las acciones fijadas por commit.
+
 ## [2.0.0] - 2026-11-18
 
 Versión de seguridad y calidad. Incluye cambios incompatibles: revisa **Cambiado** y **Eliminado** antes de actualizar.

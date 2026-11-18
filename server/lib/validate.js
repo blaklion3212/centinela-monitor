@@ -7,6 +7,7 @@
 var net = require('net');
 var crypto = require('crypto');
 var Defaults = require('../../js/config/defaults.js');
+var Thresholds = require('../../js/shared/thresholds.js'); // reglas de umbrales compartidas con el navegador
 
 var HOST_RE = /^(?=.{1,253}$)[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?(?:\.[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?)*$/i;
 // El primer carácter debe ser alfanumérico: así un nombre nunca se interpreta como opción (-H...) del comando.
@@ -100,12 +101,30 @@ function sanitizeTarget(input, existing, settings) {
     else if (services.indexOf(s) < 0 && services.length < 20) services.push(s);
   });
   var token = typeof ag.token === 'string' ? ag.token.slice(0, 200) : '';
+  var tls = bool(ag.tls, false);
+  // Huella SHA-256 del certificado del agente: 64 hex con o sin ':'; se guarda como 'AA:BB:...'. Vacío = sin fijar.
+  var fingerprint = '';
+  var fpRaw = typeof ag.fingerprint === 'string' ? ag.fingerprint.trim() : '';
+  if (fpRaw) {
+    var fpHex = fpRaw.replace(/:/g, '');
+    if (/^[0-9a-fA-F]{64}$/.test(fpHex) && (fpRaw.indexOf(':') < 0 || /^([0-9a-fA-F]{2}:){31}[0-9a-fA-F]{2}$/.test(fpRaw))) {
+      fingerprint = fpHex.toUpperCase().replace(/(..)(?!$)/g, '$1:');
+    } else errors.push('Huella TLS no válida (64 caracteres hexadecimales)');
+  }
+  // Sin TLS la huella no tiene sentido: se vacía. Con TLS es obligatoria (el token solo viaja a un certificado fijado).
+  if (!tls) fingerprint = '';
+  else if (!fpRaw) errors.push('Con TLS activado, la huella SHA-256 del certificado del agente es obligatoria');
   if (!token && !ag.clearToken && prevAgent) {
     // El token queda atado al destino: si cambió la dirección o el puerto del agente, no se hereda
     // (evita que un cambio de address envíe el secreto anterior a otro servidor).
     var sameDest = normAddress(existing.address) === normAddress(address) &&
                    int(prevAgent.port, 1, 65535, 9100) === int(ag.port, 1, 65535, 9100);
-    if (sameDest) token = prevAgent.token || '';
+    // Tampoco se hereda si se desactiva TLS (true -> false): el token pasaría a viajar en claro.
+    var tlsDowngrade = prevAgent.tls === true && !tls;
+    // Ni si cambia la huella fijada (distinta o quitada): el secreto no debe ir a otro certificado.
+    var prevFp = String(prevAgent.fingerprint || '').replace(/:/g, '').toUpperCase();
+    var sameFp = prevFp === fingerprint.replace(/:/g, '').toUpperCase();
+    if (sameDest && !tlsDowngrade && sameFp) token = prevAgent.token || '';
   }
 
   var isHttps = kind === 'url' && /^https:/i.test(address);
@@ -127,6 +146,8 @@ function sanitizeTarget(input, existing, settings) {
         enabled: bool(ag.enabled, false),
         port: int(ag.port, 1, 65535, 9100),
         token: token,
+        tls: tls,
+        fingerprint: fingerprint,
         services: services
       }
     }
@@ -140,6 +161,8 @@ function publicTarget(t) {
   if (copy.checks && copy.checks.agent) {
     copy.checks.agent.hasToken = !!copy.checks.agent.token;
     copy.checks.agent.token = '';
+    copy.checks.agent.tls = copy.checks.agent.tls === true;
+    copy.checks.agent.fingerprint = typeof copy.checks.agent.fingerprint === 'string' ? copy.checks.agent.fingerprint : '';
   }
   return copy;
 }
@@ -151,8 +174,7 @@ function numOrNull(v) {
   return null;
 }
 
-// Los avisos de métricas en Ms y Pct deben ser > 0 (un aviso en 0 dispara alertas permanentes).
-function isPositiveWarn(k) { return /Warn(Ms|Pct)$/.test(k); }
+var isPositiveWarn = Thresholds.isPositiveWarn;
 
 // Sustituye por el valor por defecto todo aviso Ms/Pct guardado como 0, negativo o no numérico.
 function fixZeroWarns(th, d) {
@@ -181,15 +203,11 @@ function sanitizeSettings(input, current) {
     });
     fixZeroWarns(out.thresholds, d); // repara también valores guardados con ceros
     // Orden por métrica: aviso < crítico (en SSL, por días restantes, aviso > crítico). Si no cumple, se conservan los previos.
-    Object.keys(d.thresholds).forEach(function (k) {
-      var m = /^(.*)Warn(Ms|Pct|Days)$/.exec(k);
-      if (!m) return;
-      var ck = m[1] + 'Crit' + m[2], w = out.thresholds[k], c = out.thresholds[ck];
-      var ok = m[2] === 'Days' ? w > c : w < c;
-      if (ok) return;
+    Thresholds.PAIRS.forEach(function (p) {
+      if (Thresholds.isOrdered(p, out.thresholds[p.warn], out.thresholds[p.crit])) return;
       var base = current && current.thresholds ? current.thresholds : d.thresholds;
-      out.thresholds[k] = base[k];
-      out.thresholds[ck] = base[ck];
+      out.thresholds[p.warn] = base[p.warn];
+      out.thresholds[p.crit] = base[p.crit];
     });
     fixZeroWarns(out.thresholds, d); // por si los previos usados como respaldo tenían ceros
   }
@@ -198,14 +216,7 @@ function sanitizeSettings(input, current) {
 
 // Etiquetas en español (las mismas que ve el usuario en Ajustes) para los mensajes de error.
 var SETTING_LABELS = { intervalSec: 'Intervalo por defecto (s)', historyPoints: 'Puntos de historial' };
-var THRESHOLD_BASE = { latency: 'Latencia', loss: 'Pérdida de paquetes', jitter: 'Jitter', ttfb: 'TTFB HTTP', ssl: 'SSL: días restantes',
-                       disk: 'Disco usado', cpu: 'CPU', mem: 'Memoria RAM', ioWait: 'I/O wait' };
-// 'lossWarnPct' -> 'Pérdida de paquetes (aviso)'; 'sslCritDays' -> 'SSL: días restantes (crítico)'.
-function thresholdLabel(k) {
-  var m = /^(.*)(Warn|Crit)(Ms|Pct|Days)$/.exec(k);
-  if (!m || !THRESHOLD_BASE[m[1]]) return k;
-  return THRESHOLD_BASE[m[1]] + ' (' + (m[2] === 'Warn' ? 'aviso' : 'crítico') + ')';
-}
+var thresholdLabel = Thresholds.thresholdLabel;
 
 // Problemas del cuerpo recibido en ajustes (mensajes en español); vacío si todo está bien.
 // sanitizeSettings sigue siendo tolerante: esto sirve para que la API responda 400 con detalle.
@@ -228,15 +239,9 @@ function settingsErrors(body, prev) {
     if (n === 0 && isPositiveWarn(k)) { errors.push('El umbral "' + thresholdLabel(k) + '" debe ser mayor que 0.'); return; }
     eff[k] = n;
   });
-  Object.keys(d.thresholds).forEach(function (k) {
-    var m = /^(.*)Warn(Ms|Pct|Days)$/.exec(k);
-    if (!m) return;
-    var ck = m[1] + 'Crit' + m[2], w = eff[k], c = eff[ck];
-    if (m[2] === 'Days' ? !(w > c) : !(w < c)) {
-      errors.push(m[2] === 'Days'
-        ? 'En "' + THRESHOLD_BASE[m[1]] + '" el aviso (' + w + ') debe ser mayor que el crítico (' + c + '): se avisa con más días de margen.'
-        : 'En "' + THRESHOLD_BASE[m[1]] + '" el aviso (' + w + ') debe ser menor que el crítico (' + c + ').');
-    }
+  Thresholds.PAIRS.forEach(function (p) {
+    var w = eff[p.warn], c = eff[p.crit];
+    if (!Thresholds.isOrdered(p, w, c)) errors.push(Thresholds.orderMessage(p, w, c));
   });
   return errors;
 }

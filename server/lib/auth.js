@@ -5,6 +5,8 @@
  *   - Sesión: cookie HttpOnly con un identificador aleatorio; las sesiones viven en memoria (se pierden al reiniciar).
  *   - Roles: admin (todo, incluye usuarios) · operator (edita objetivos, organizaciones, ajustes y ventanas) · viewer (solo lectura).
  *   - Límite de intentos: 5 fallos por usuario+IP bloquean 60 s; más de 20 fallos por IP en 10 min dan 429 sin calcular hash.
+ *   - Los intentos se reservan ANTES de calcular el hash (cuentan como fallo pendiente y se anulan si resultan correctos),
+ *     así una ráfaga paralela no obtiene más verificaciones que el límite.
  *   - El hash scrypt es asíncrono (no bloquea el event loop) y hay un máximo de 4 cálculos simultáneos (login, alta, edición y cambio
  *     de contraseña comparten el mismo semáforo; el exceso recibe 429).
  *   - Los cambios se escriben en users.json ANTES de tocar la memoria (se opera sobre una copia).
@@ -131,7 +133,7 @@ function create(storeDir) {
     return best;
   }
 
-  function lockKey(name, ip) { return String(name).toLowerCase() + '|' + ip; }
+  function lockKey(name, ip) { return cleanUsername(name).toLowerCase() + '|' + ip; }
 
   // Registro de intentos: expulsa lo caducado y, si sigue sobre el tope, lo más antiguo (Map conserva el orden de inserción).
   function pruneAttempts(now) {
@@ -141,6 +143,18 @@ function create(storeDir) {
     ipFails.forEach(function (f, k) { if (now - f.first > IP_WINDOW_MS) ipFails.delete(k); });
     while (attempts.size > MAX_ATTEMPTS) attempts.delete(attempts.keys().next().value);
     while (ipFails.size > MAX_ATTEMPTS) ipFails.delete(ipFails.keys().next().value);
+  }
+  // Reserva un intento ANTES de calcular el hash (V-05): cuenta como fallo pendiente, de modo que las ráfagas
+  // paralelas no superen el límite. Devuelve la referencia para anularlo si el intento resulta correcto.
+  function reserve(key, ip, now) {
+    failed(key, ip, now);
+    return { ipEntry: ipFails.get(ip) };
+  }
+  // Anula la reserva de un intento correcto: borra el contador de usuario+IP y devuelve el cupo por IP.
+  function cancelReserve(key, ip, rsv) {
+    attempts.delete(key);
+    var f = rsv && rsv.ipEntry;
+    if (f && ipFails.get(ip) === f) { if (f.n > 1) f.n--; else ipFails.delete(ip); }
   }
   function failed(key, ip, now) {
     var a = attempts.get(key);
@@ -202,6 +216,7 @@ function create(storeDir) {
       var blk = blockedBy(key, ip, now);
       if (blk) return blk;
       if (!acquire()) return { error: BUSY_MSG, status: 429 };
+      var rsv = reserve(key, ip, now); // el intento queda contado como fallo hasta que se confirme
       var u, ok;
       try {
         u = byName(cleanUsername(username));
@@ -212,11 +227,8 @@ function create(storeDir) {
       now = Date.now();
       if (ok) u = find(u.id); // pudo cambiar o borrarse durante el hash
       // Mismo mensaje para usuario inexistente, contraseña errónea o usuario deshabilitado.
-      if (!ok || !u || u.disabled) {
-        failed(key, ip, now);
-        return { error: 'Usuario o contraseña incorrectos.', status: 401 };
-      }
-      attempts.delete(key);
+      if (!ok || !u || u.disabled) return { error: 'Usuario o contraseña incorrectos.', status: 401 };
+      cancelReserve(key, ip, rsv);
       // Primero a disco: si no se puede guardar, no se crea la sesión.
       var nu = Object.assign({}, u, { lastLogin: now });
       try { persist(replaceUser(nu)); }
@@ -320,11 +332,11 @@ function create(storeDir) {
       var blk = blockedBy(key, ip, now);
       if (blk) return { errors: [blk.error], status: 429 };
       if (!acquire()) return busy();
+      var rsv = reserve(key, ip, now); // contado como fallo pendiente hasta confirmar la contraseña actual
       var ok;
       try { ok = await verifyPassword(current, u); } finally { release(); }
       if (!ok) {
         now = Date.now();
-        failed(key, ip, now);
         var a = attempts.get(key);
         if (a && a.until > now) {
           if (keepSid) endSession(keepSid);
@@ -332,7 +344,7 @@ function create(storeDir) {
         }
         return { errors: ['La contraseña actual no es correcta.'] };
       }
-      attempts.delete(key);
+      cancelReserve(key, ip, rsv);
       var pe = checkPassword(next);
       if (pe) return { errors: [pe] };
       if (next === current) return { errors: ['La contraseña nueva debe ser distinta de la actual.'] };

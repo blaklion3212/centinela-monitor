@@ -1,0 +1,59 @@
+# Integración continua de Centinela: ejecuta la suite de pruebas y valida que la imagen Docker se construya.
+name: Pruebas
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Permisos mínimos: el flujo solo necesita leer el código.
+permissions:
+  contents: read
+
+# Cancela ejecuciones obsoletas de la misma rama o PR.
+concurrency:
+  group: pruebas-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pruebas:
+    name: Pruebas (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [18, 20, 22, 24]
+    steps:
+      - name: Obtener el código
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Preparar Node ${{ matrix.node }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ matrix.node }}
+          # Sin caché: el proyecto no tiene dependencias ni package-lock.json.
+
+      - name: Mostrar versiones
+        run: node --version && npm --version
+
+      # Sin "npm ci": el proyecto no tiene dependencias.
+      - name: Ejecutar la suite
+        run: npm test
+
+  imagen-docker:
+    name: Construcción de la imagen Docker (sin publicar)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Obtener el código
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # Solo construye para detectar roturas del Dockerfile; no hace push ni inicia sesión en registros.
+      - name: Construir la imagen
+        run: docker build --tag centinela-monitor:ci .

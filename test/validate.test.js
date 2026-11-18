@@ -257,3 +257,130 @@ test('R3: settingsErrors acumula varios errores y no muta sus argumentos', funct
   assert.strictEqual(JSON.stringify(base), antes);
   assert.strictEqual(JSON.stringify(body), cuerpo);
 });
+
+/* ---------- Fase 3: TLS del agente (tls, huella fijada y token) ---------- */
+var HEX64 = 'ab'.repeat(32);
+var HUELLA = Array(32).fill('AB').join(':');
+function conAgente(extra, previo) {
+  var ag = Object.assign({ enabled: true, port: 9100, services: [] }, extra);
+  return V.sanitizeTarget({ name: 'srv', address: '10.0.0.5', checks: { agent: ag } }, previo || null, null);
+}
+function previoTls(tls) {
+  return { id: 't_1', address: '10.0.0.5', checks: { agent: { enabled: true, port: 9100, token: 'SECRETO', tls: tls, fingerprint: '', services: [] } } };
+}
+
+test('Fase 3 TLS: la huella se normaliza a AA:BB:... (con o sin ":", en minúsculas o mayúsculas, con espacios sobrantes)', function () {
+  [HEX64, HEX64.toUpperCase(), HUELLA, HUELLA.toLowerCase(), '  ' + HEX64 + '  '].forEach(function (f) {
+    var r = conAgente({ tls: true, fingerprint: f });
+    assert.deepStrictEqual(r.errors, [], JSON.stringify(f));
+    assert.strictEqual(r.value.checks.agent.fingerprint, HUELLA, JSON.stringify(f));
+  });
+  var mixta = conAgente({ tls: true, fingerprint: '0a1B2c3D'.repeat(8) });
+  assert.strictEqual(mixta.value.checks.agent.fingerprint, '0A:1B:2C:3D:'.repeat(8).slice(0, -1));
+});
+
+test('Fase 3 TLS: huella inválida => error (longitud, caracteres no hex, separadores mal puestos)', function () {
+  ['ab'.repeat(31), 'ab'.repeat(33), 'zz'.repeat(32), 'ab'.repeat(31) + 'a', HUELLA.replace(/:/, '::'),
+   HUELLA + ':', ':' + HUELLA, 'ab:' + 'ab'.repeat(31), 'no es una huella', HUELLA.replace(/:/g, '-')].forEach(function (f) {
+    var r = conAgente({ tls: true, fingerprint: f });
+    assert.ok(r.errors.some(function (e) { return /Huella TLS no válida/.test(e); }), 'debía rechazar ' + JSON.stringify(f) + ' => ' + JSON.stringify(r.errors));
+    assert.strictEqual(r.value.checks.agent.fingerprint, '', 'una huella inválida no se guarda');
+  });
+});
+
+test('Fase 3 TLS: con tls y sin huella (vacía, ausente o no cadena) => error de huella obligatoria y queda vacía; tls por defecto es false', function () {
+  [undefined, '', '   ', null, 123, {}].forEach(function (f) {
+    var r = conAgente({ tls: true, fingerprint: f });
+    assert.deepStrictEqual(r.errors, ['Con TLS activado, la huella SHA-256 del certificado del agente es obligatoria'], JSON.stringify(f));
+    assert.strictEqual(r.value.checks.agent.fingerprint, '');
+    assert.strictEqual(r.value.checks.agent.tls, true);
+  });
+  assert.strictEqual(conAgente({}).value.checks.agent.tls, false);
+});
+
+test('Fase 3 TLS: sin TLS la huella no es obligatoria y, si se envía una válida, se guarda vacía', function () {
+  [undefined, '', null].forEach(function (f) {
+    var r = conAgente({ tls: false, fingerprint: f });
+    assert.deepStrictEqual(r.errors, [], JSON.stringify(f));
+    assert.strictEqual(r.value.checks.agent.fingerprint, '');
+  });
+  var conHuella = conAgente({ tls: false, fingerprint: HUELLA });
+  assert.deepStrictEqual(conHuella.errors, []);
+  assert.strictEqual(conHuella.value.checks.agent.fingerprint, '', 'tls=false vacía la huella');
+  assert.strictEqual(conAgente({ fingerprint: HEX64 }).value.checks.agent.fingerprint, '', 'tls ausente (false) también');
+  // Una huella mal formada sigue siendo un error aunque TLS esté apagado (no se silencia basura).
+  assert.ok(conAgente({ tls: false, fingerprint: 'no es una huella' }).errors.some(function (e) { return /Huella TLS no válida/.test(e); }));
+});
+
+test('Fase 3 TLS: el token NO se hereda al pasar tls de true a false (evita enviarlo en claro)', function () {
+  var r = conAgente({ tls: false }, previoTls(true));
+  assert.strictEqual(r.value.checks.agent.token, '');
+  assert.strictEqual(r.value.checks.agent.tls, false);
+});
+
+test('Fase 3 TLS: el token SÍ se hereda de false a true y de true a true (destino igual)', function () {
+  assert.strictEqual(conAgente({ tls: true }, previoTls(false)).value.checks.agent.token, 'SECRETO');
+  assert.strictEqual(conAgente({ tls: true }, previoTls(true)).value.checks.agent.token, 'SECRETO');
+  assert.strictEqual(conAgente({ tls: false }, previoTls(false)).value.checks.agent.token, 'SECRETO');
+});
+
+test('Fase 3 TLS: al bajar de TLS un token nuevo enviado se respeta; si cambia el destino con TLS tampoco se hereda', function () {
+  assert.strictEqual(conAgente({ tls: false, token: 'NUEVO' }, previoTls(true)).value.checks.agent.token, 'NUEVO');
+  var otro = V.sanitizeTarget({ name: 'srv', address: '10.0.0.99', checks: { agent: { enabled: true, port: 9100, tls: true } } }, previoTls(true), null);
+  assert.strictEqual(otro.value.checks.agent.token, '');
+});
+
+test('Fase 3 TLS: publicTarget expone tls y fingerprint (nunca el token) y sanea valores ausentes o inválidos', function () {
+  var t = conAgente({ tls: true, fingerprint: HEX64, token: 'SECRETO' }).value;
+  var p = V.publicTarget(t);
+  assert.strictEqual(p.checks.agent.tls, true);
+  assert.strictEqual(p.checks.agent.fingerprint, HUELLA);
+  assert.strictEqual(p.checks.agent.token, '');
+  assert.strictEqual(p.checks.agent.hasToken, true);
+  assert.strictEqual(t.checks.agent.token, 'SECRETO', 'no modifica el original');
+  // Objetivos antiguos (sin los campos) y datos corruptos en disco.
+  var viejo = { id: 'x', checks: { agent: { enabled: true, token: '' } } };
+  var pv = V.publicTarget(viejo);
+  assert.strictEqual(pv.checks.agent.tls, false);
+  assert.strictEqual(pv.checks.agent.fingerprint, '');
+  var corrupto = V.publicTarget({ id: 'y', checks: { agent: { tls: 'si', fingerprint: 42, token: 'a' } } });
+  assert.strictEqual(corrupto.checks.agent.tls, false, 'solo true estricto cuenta como TLS');
+  assert.strictEqual(corrupto.checks.agent.fingerprint, '');
+});
+
+/* ---------- Fase 3 TLS: el token queda atado a la huella fijada ---------- */
+function previoConHuella(fp, tls) {
+  return { id: 't_1', address: '10.0.0.5', checks: { agent: { enabled: true, port: 9100, token: 'SECRETO', tls: tls !== false, fingerprint: fp, services: [] } } };
+}
+var OTRA_HUELLA = Array(32).fill('CD').join(':');
+
+test('Fase 3 TLS: el token NO se hereda si la huella cambia a otra distinta', function () {
+  var r = conAgente({ tls: true, fingerprint: OTRA_HUELLA }, previoConHuella(HUELLA));
+  assert.deepStrictEqual(r.errors, []);
+  assert.strictEqual(r.value.checks.agent.token, '');
+  assert.strictEqual(r.value.checks.agent.fingerprint, OTRA_HUELLA);
+});
+
+test('Fase 3 TLS: el token NO se hereda si se quita la huella (aunque además haya error de huella obligatoria)', function () {
+  var r = conAgente({ tls: true, fingerprint: '' }, previoConHuella(HUELLA));
+  assert.strictEqual(r.value.checks.agent.token, '');
+  assert.ok(r.errors.length > 0, 'con TLS la huella vacía es un error');
+  // Y tampoco si se apaga TLS (la huella pasa a guardarse vacía): el token no se arrastra.
+  var sinTls = conAgente({ tls: false }, previoConHuella(HUELLA));
+  assert.strictEqual(sinTls.value.checks.agent.token, '');
+});
+
+test('Fase 3 TLS: cambiar solo mayúsculas o los ":" de la huella NO cuenta como cambio y el token se conserva', function () {
+  [HUELLA, HUELLA.toLowerCase(), HEX64, HEX64.toUpperCase(), '  ' + HUELLA.toLowerCase() + '  '].forEach(function (f) {
+    var r = conAgente({ tls: true, fingerprint: f }, previoConHuella(HUELLA));
+    assert.deepStrictEqual(r.errors, [], JSON.stringify(f));
+    assert.strictEqual(r.value.checks.agent.token, 'SECRETO', JSON.stringify(f));
+  });
+  // El previo guardado en minúsculas o sin ":" (formato antiguo) también se compara normalizado.
+  assert.strictEqual(conAgente({ tls: true, fingerprint: HUELLA }, previoConHuella(HEX64)).value.checks.agent.token, 'SECRETO');
+});
+
+test('Fase 3 TLS: un token nuevo enviado se respeta aunque cambie la huella; clearToken lo borra aunque no cambie', function () {
+  assert.strictEqual(conAgente({ tls: true, fingerprint: OTRA_HUELLA, token: 'NUEVO' }, previoConHuella(HUELLA)).value.checks.agent.token, 'NUEVO');
+  assert.strictEqual(conAgente({ tls: true, fingerprint: HUELLA, clearToken: true }, previoConHuella(HUELLA)).value.checks.agent.token, '');
+});

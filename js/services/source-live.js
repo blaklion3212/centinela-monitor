@@ -5,6 +5,8 @@
   var es = null, wasDown = false, retryTimer = null, retryN = 0;
   // Pausa por expulsión (tope de flujos): no se reintenta sola; se sale por clic o al volver a ver la pestaña.
   var paused = false, autoResume = false, visHooked = false;
+  // Verificación de sesión en curso (puede incluir el modal de cambio de contraseña): evita reintentos en paralelo.
+  var verifying = false;
 
   // Texto de respaldo cuando el servidor no manda mensaje (429 y 421 normalmente sí lo mandan).
   var HTTP_TEXT = { 421: 'Host no permitido por el servidor.', 429: 'Demasiadas peticiones o intentos. Espera un momento.' };
@@ -48,15 +50,17 @@
   }
   // El flujo quedó cerrado: si la sesión sigue válida se reabre; si no, flujo de login como siempre.
   function scheduleRetry() {
-    if (retryTimer || paused) return;
+    if (retryTimer || paused || verifying) return;
     retryTimer = setTimeout(function () {
       retryTimer = null;
       if (paused) return;
       if (!NOC.auth) { retryN++; stream(); return; }
+      verifying = true; // mientras el modal de cambio de contraseña esté abierto no se agenda nada más
       NOC.auth.verify().then(function (ok) {
+        verifying = false;
         if (!ok) { NOC.auth.onUnauthorized(); return; }
         retryN++; stream();
-      }, function () { retryN++; scheduleRetry(); }); // servidor inalcanzable: se vuelve a intentar
+      }, function () { verifying = false; retryN++; scheduleRetry(); }); // defensivo: verify() absorbe los errores de red y resuelve true, así que esta rama casi nunca corre
     }, retryDelay());
   }
 

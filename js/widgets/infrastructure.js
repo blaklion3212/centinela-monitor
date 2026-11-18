@@ -8,6 +8,16 @@
     return W.note('alert', 'El agente no responde', a.error + '. Revisa que el agente esté corriendo, el puerto y el token.');
   }
 
+  // Advertencias del agente (p. ej. 'TLS sin huella fijada'): lectura defensiva, siempre escapadas.
+  function agentWarn(a) {
+    // El servidor envía `agent.warning` (texto, p. ej. 'TLS sin huella fijada'); también se acepta `warnings` (lista).
+    var w = [], out = [];
+    if (a && typeof a.warning === 'string') w.push(a.warning);
+    if (a && Array.isArray(a.warnings)) w = w.concat(a.warnings);
+    w.forEach(function (x) { if (typeof x === 'string' && x) out.push(U.esc(x)); });
+    return out.length ? '<div class="hint" role="status" style="color:var(--degraded);margin:6px 0">' + out.join(' · ') + '</div>' : '';
+  }
+
   /* ---------- CPU y RAM ---------- */
   NOC.widgets.register({
     type: 'cpu-ram', title: 'CPU y memoria RAM', icon: 'cpu', target: 'required', accepts: agentOk,
@@ -24,7 +34,7 @@
         W.stat('RAM', F.num(mem, 0), '% · ' + F.mb(a.mem.usedMb) + ' / ' + F.mb(a.mem.totalMb), W.level(mem, th.memWarnPct, th.memCritPct)) +
         W.stat('I/O wait', U.isNum(io) ? F.num(io, 1) : 'n/d', U.isNum(io) ? '%' : '', W.level(io, th.ioWaitWarnPct, th.ioWaitCritPct)) +
         W.stat('Carga (1 min)', a.cpu.load && U.isNum(a.cpu.load[0]) ? a.cpu.load[0].toFixed(2) : 'n/d', U.isNum(a.cpu.cores) && a.cpu.cores > 0 ? '/ ' + U.esc(a.cpu.cores) + ' núcleos' : '') +
-        W.stat('Encendido', F.dur(a.uptimeSec), '') + '</div>' +
+        W.stat('Encendido', F.dur(a.uptimeSec), '') + '</div>' + agentWarn(a) +
         '<div class="chart" data-chart></div><div class="legend"><span><i style="background:var(--s1)"></i>CPU</span><span><i style="background:var(--s2)"></i>RAM</span></div></div>';
       NOC.charts.line(ctx.body.querySelector('[data-chart]'), { points: store.series(t.id, W.range(ctx.state)), label: 'CPU y RAM de ' + t.name, yMax: 100,
         yFmt: function (v) { return Math.round(v) + '%'; },

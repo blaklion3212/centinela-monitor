@@ -43,6 +43,30 @@ El resto del contenido (capítulos 3 a 8 en lo no citado, 10, 15, 17 en lo no ci
 | 17. Limitaciones | Se añaden sesiones en memoria, límite por IP detrás de un proxy y 200 usuarios. | `server/lib/auth.js`. |
 | 18. Glosario | Términos nuevos: Sesión, DNS rebinding, CSRF. | Capítulos 9 y 12. |
 
+## Revisión 2.1.0 (fase 3)
+
+Revisión sobre el manual 2.0.0, con la versión `2.1.0` en los metadatos y en los ejemplos de arranque (propuesta pendiente de aprobación formal). Fecha: 18 de noviembre de 2026. Fuente de verdad: el código (archivo entre paréntesis).
+
+| Sección | Qué cambió | Por qué (fuente) |
+|---|---|---|
+| Portada y ejemplos (2.2, 9.1) | Versión `2.1.0`; ejemplos “Centinela 2.1.0 →”. | Propuesta del orquestador. |
+| 2.3 Variables | Fila nueva `CENTINELA_TRUST_PROXY`; `CENTINELA_CHECK_TIMEOUT_MS` menciona el tope de 2 × el plazo para sondas huérfanas. | `server/server.js` (`TRUSTED_PROXIES`), `server/lib/scheduler.js`. |
+| 3.5 Mediciones | Fila del agente con TLS y plazo absoluto de 10 s. Subsecciones nuevas “Verificaciones colgadas” (tope 2 × plazo, capacidad reducida, avisos de consola) y “Límites de verificar ahora” (409; 429 con `Retry-After` a menos de 5 s por objetivo; 429 con 3 simultáneas o 30 por minuto por usuario, por IP sin autenticación). | `server/lib/scheduler.js`, `server/server.js` (`hTargetCheck`), `server/lib/checks.js`. |
+| 6.2 Formulario (agente) | Filas nuevas “Conexión cifrada (TLS)” y “Huella SHA-256 del certificado” (obligatoria con TLS); el token se descarta también al cambiar la huella o desactivar TLS; aviso actualizado; nota de huella obligatoria. | `server/lib/validate.js`, `js/views/targets.js`. |
+| 6.3 Errores de validación | Filas nuevas: huella obligatoria y huella no válida. | `server/lib/validate.js`. |
+| 8 Ajustes (Figura 12) y 8.3 | Se elimina la nota de que la captura es anterior (la figura la sustituye otra captura actual); el cuadro “Cómo medir servidores remotos” describe el paso opcional de TLS. | `js/views/settings.js`. |
+| 9.3 Usuarios (Figuras 14 y 15) | Se eliminan las notas “la captura es anterior…” de ambas figuras (sustituidas por capturas actuales); los pies de figura mencionan la etiqueta y la casilla. La fila “Obligar a cambiar la contraseña al entrar” indica que la pestaña del usuario muestra el modal “Debes cambiar tu contraseña” (H-1). | `js/services/auth.js` (`verify`, `requireChange`), `js/views/users.js`. |
+| 9.5 Protección contra adivinar contraseñas | El intento se cuenta antes de verificar la contraseña; mayúsculas y espacios del usuario comparten contador; la nota del proxy remite a `CENTINELA_TRUST_PROXY`. | `server/lib/auth.js` (`lockKey`, `reserve`, `cancelReserve`). |
+| 11 Agente | Intro; pasos 3 y 5 de 11.1; opciones `--tls-cert`/`--tls-key` y variables `CENTINELA_AGENT_TLS_CERT`/`_KEY` en 11.2; sección nueva 11.4 “Conexión cifrada (TLS) y huella del certificado” (generación con `openssl`, arranque, huella impresa, errores, token descartado). | `agent/agent.js`, `server/lib/checks.js` (`agentFetch`). |
+| 12 Seguridad y 12.1 nueva | Filas actualizadas (bloqueo de intentos, tokens, agente, límites) y fila “Proxy inverso”; sección 12.1 con el funcionamiento de `CENTINELA_TRUST_PROXY` (entrada más a la derecha no confiable, sin CIDR, puertos y `[v6]`, requisitos del proxy). | `server/server.js` (`parseForwarded`, `clientIp`). |
+| 13.2 y 13.3 | `tls` y `fingerprint` en `checks.agent`; respuestas 429 de `check`. | `server/lib/validate.js`, `server/server.js`. |
+| 14.2, 14.4, 14.5 y 14.6 | Notas de `CENTINELA_TRUST_PROXY` en contenedor (el `compose.yml` no la pasa); Podman: `podman restart` falla en podman sin root (“rootless netns: kill network process: permission denied”) y deja el contenedor detenido, alternativas (`podman-compose -p <proyecto> restart`, `podman stop` + `podman start`) y arranque con el equipo (`systemctl --user enable podman-restart.service`, `loginctl enable-linger $USER`); dos filas de problemas. | Laboratorio de la fase 3 (`docs/BITACORA.md`), `compose.yml`. |
+| 16 Solución de problemas | Filas nuevas: huella ausente o distinta, agente lento, agente TLS que no arranca, 429 de verificar ahora, bloqueo compartido tras un proxy, aviso de `CENTINELA_TRUST_PROXY`, verificación huérfana, modal obligatorio, podman. | Código citado arriba. |
+| 17 y 18 | Limitaciones del agente y del proxy reescritas; términos nuevos: huella, proxy de confianza, verificación huérfana. | Capítulos 11 y 12. |
+| Anexos C y D (nuevos) | Tabla de variables de entorno (servidor y agente) y tabla de mensajes de error y códigos. | Todo lo anterior. |
+
+Las figuras no cambian de número ni de posición; las imágenes de las Figuras 12, 14 y 15 las sustituye otro encargo.
+
 ## Secciones sin cambios de contenido
 
 Capítulos 3 (excepto 3.2 y 3.5), 5, 7, 10 (excepto los dos puntos indicados), 15 (excepto 15.10), Anexos A y B y el resto de las secciones 2, 6 y 8 se transcribieron del PDF. Solo hubo adaptaciones de formato: las celdas con una barra vertical se reescribieron con “o”, la nota “Cuidado” del capítulo 11 pasó a `> **Importante:**` (el generador solo admite Nota, Importante y Consejo) y las tablas de clave-valor del catálogo llevan una fila de cabecera (“Aspecto | Detalle”).

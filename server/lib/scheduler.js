@@ -27,18 +27,31 @@ function Scheduler(store) {
   this.events = [];
   this.active = 0;
   this.waiters = [];
+  this.orphans = 0; // verificaciones con plazo vencido cuya sonda sigue viva
   this.stopped = false;
 }
 Scheduler.prototype = Object.create(EventEmitter.prototype);
 
+// Capacidad efectiva: las verificaciones huérfanas (plazo vencido pero sonda aún viva) siguen consumiendo recursos,
+// así que restan cupo, hasta un máximo de la mitad (nunca se bloquea del todo y el exceso queda acotado).
+Scheduler.prototype.capacity = function () {
+  return MAX_CONCURRENT - Math.min(this.orphans, Math.floor(MAX_CONCURRENT / 2));
+};
+Scheduler.prototype.drain = function () {
+  while (this.waiters.length && this.active < this.capacity()) { this.active++; this.waiters.shift()(); }
+};
 Scheduler.prototype.acquire = function () {
   var self = this;
-  if (self.active < MAX_CONCURRENT) { self.active++; return Promise.resolve(); }
+  if (self.active < self.capacity()) { self.active++; return Promise.resolve(); }
   return new Promise(function (res) { self.waiters.push(res); });
 };
 Scheduler.prototype.release = function () {
-  var next = this.waiters.shift();
-  if (next) next(); else this.active--;
+  if (this.active > 0) this.active--;
+  this.drain();
+};
+// Estado de concurrencia (para pruebas y diagnóstico).
+Scheduler.prototype.stats = function () {
+  return { active: this.active, waiting: this.waiters.length, orphans: this.orphans, capacity: this.capacity(), max: MAX_CONCURRENT };
 };
 
 Scheduler.prototype.start = function () {
@@ -123,7 +136,23 @@ Scheduler.prototype.runOne = async function (target) {
       r = { id: id, ts: Date.now(), status: Evaluate.STATUS.DOWN,
             reasons: [{ level: 'crit', text: TIMEOUT_REASON, down: true, code: 'timeout' }] };
       held = true;
-      real.then(function () {}, function () {}).then(function () { self.running.delete(id); });
+      // Mientras siga viva cuenta como huérfana y reduce la capacidad efectiva (ver capacity).
+      self.orphans++;
+      console.warn('[scheduler] verificación huérfana: "' + (target.name || id) + '" excedió el plazo; huérfanas vivas: ' + self.orphans);
+      // Tope a la huérfana (2 x plazo): pasado, se libera el id y se descuenta igualmente. "settled" evita el doble descuento.
+      var settled = false, cap = null;
+      var release = function (why) {
+        if (settled) return;
+        settled = true;
+        if (cap) clearTimeout(cap);
+        self.running.delete(id);
+        self.orphans--;
+        console.warn('[scheduler] verificación huérfana ' + why + ': "' + (target.name || id) + '"; huérfanas vivas: ' + self.orphans);
+        self.drain();
+      };
+      cap = setTimeout(function () { release('liberada por tope de ' + (2 * CHECK_TIMEOUT_MS) + ' ms sin terminar'); }, 2 * CHECK_TIMEOUT_MS);
+      if (cap.unref) cap.unref();
+      real.then(function () {}, function () {}).then(function () { release('terminada'); });
     }
   } finally {
     if (acquired) self.release();

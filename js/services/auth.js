@@ -90,8 +90,13 @@
       NOC.views.login.show('Tu sesión terminó. Inicia sesión de nuevo.').then(function () { location.reload(); });
     },
     // Tras caerse el flujo en vivo: ¿sigue vigente la sesión?
+    // Si la sesión exige cambiar la contraseña (mustChange), abre el modal obligatorio y resuelve true solo al completarlo (H-1).
     verify: function () {
-      return call('GET', '/api/auth/me').then(function () { return true; }, function (e) { return e.status === 401 ? false : true; });
+      return call('GET', '/api/auth/me').then(function (j) {
+        if (j && j.user) { A.user = j.user; if (typeof j.authEnabled === 'boolean') A.authEnabled = j.authEnabled; A.applyRole(); }
+        if (j && j.user && j.user.mustChange) return A.requireChange().then(function () { return true; });
+        return true;
+      }, function (e) { return e.status === 401 ? false : true; });
     }
   };
 })(window.NOC = window.NOC || {});

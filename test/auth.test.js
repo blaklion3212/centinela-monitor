@@ -416,3 +416,112 @@ test('R4: si no se puede escribir users.json, la memoria no cambia (create, upda
     fs.writeFileSync(p, respaldo, { mode: 0o600 });
   }
 });
+
+/* ---------- V-05: el intento se reserva ANTES de calcular el hash ---------- */
+
+// Lanza n logins a la vez con la misma credencial e IP y devuelve los estados HTTP lógicos (200, 401, 429).
+async function rafaga(a, n, user, clave, ip) {
+  var rs = await Promise.all(Array.from({ length: n }, function () { return a.login(user, clave, ip); }));
+  return rs.map(function (r) { return r.sid ? 200 : r.status; });
+}
+function contar(estados, v) { return estados.filter(function (e) { return e === v; }).length; }
+
+test('V-05: una ráfaga paralela de claves erróneas no permite más de 5 verificaciones (el resto recibe 429 sin hashear)', async function () {
+  var a = fresh();
+  var ip = '10.20.0.1';
+  // Primera oleada: 4 a la vez (cupo del semáforo): todas se verifican y fallan.
+  var o1 = await rafaga(a, 4, authLib.DEFAULT_USER, 'mala', ip);
+  assert.deepStrictEqual(o1, [401, 401, 401, 401]);
+  // Segunda oleada: solo el 5.º intento llega a verificarse; los otros 3 ven el bloqueo ya reservado, no el semáforo.
+  var o2 = await rafaga(a, 4, authLib.DEFAULT_USER, 'mala', ip);
+  assert.strictEqual(contar(o2, 401), 1, 'solo un intento más se verifica: ' + o2);
+  assert.strictEqual(contar(o2, 429), 3, 'los demás se rechazan por bloqueo: ' + o2);
+  // La clave correcta tampoco entra: el bloqueo ya está vigente.
+  assert.strictEqual((await a.login(authLib.DEFAULT_USER, pw(a), ip)).status, 429);
+});
+
+test('V-05: la ráfaga se bloquea por reserva, no por semáforo: el mensaje es de bloqueo y no de "Servidor ocupado"', async function () {
+  var a = fresh();
+  var ip = '10.20.0.2';
+  await rafaga(a, 4, authLib.DEFAULT_USER, 'mala', ip);
+  var rs = await Promise.all(Array.from({ length: 4 }, function () { return a.login(authLib.DEFAULT_USER, 'mala', ip); }));
+  var bloqueados = rs.filter(function (r) { return r.status === 429; });
+  assert.strictEqual(bloqueados.length, 3);
+  bloqueados.forEach(function (r) { assert.match(r.error, /Demasiados intentos/); assert.doesNotMatch(r.error, /ocupado/i); });
+});
+
+test('V-05: una ráfaga con la clave correcta no se castiga: todas entran y no queda contador inflado', async function () {
+  var a = fresh();
+  var ip = '10.20.0.3';
+  var buenas = await rafaga(a, 4, authLib.DEFAULT_USER, pw(a), ip);
+  assert.deepStrictEqual(buenas, [200, 200, 200, 200], 'las reservas de los intentos correctos se anulan');
+  var otra = await rafaga(a, 4, authLib.DEFAULT_USER, pw(a), ip);
+  assert.deepStrictEqual(otra, [200, 200, 200, 200]);
+  // Contador de usuario+IP a cero: hacen falta de nuevo 5 fallos para bloquear.
+  for (var i = 0; i < 5; i++) assert.strictEqual((await a.login(authLib.DEFAULT_USER, 'mala' + i, ip)).status, 401, 'fallo ' + (i + 1));
+  assert.strictEqual((await a.login(authLib.DEFAULT_USER, pw(a), ip)).status, 429);
+});
+
+test('V-05: las reservas de intentos correctos devuelven el cupo por IP (el límite de 20 no se adelanta)', async function () {
+  var a = fresh();
+  var ip = '10.20.0.4';
+  for (var k = 0; k < 2; k++) await rafaga(a, 4, authLib.DEFAULT_USER, pw(a), ip); // 8 reservas anuladas
+  var ultimo;
+  for (var i = 0; i < 21; i++) { ultimo = await a.login('inexistente' + i, 'x', ip); assert.strictEqual(ultimo.status, 401, 'intento ' + (i + 1)); }
+  assert.strictEqual((await a.login('inexistente21', 'x', ip)).status, 429, 'el bloqueo por IP llega con >20 fallos reales');
+});
+
+test('V-05: la reserva por IP también limita ráfagas con usuarios distintos', async function () {
+  var a = fresh();
+  var ip = '10.20.0.5';
+  var estados = [];
+  for (var ola = 0; ola < 6; ola++) {
+    var rs = await Promise.all([0, 1, 2, 3].map(function (j) { return a.login('usuario-' + ola + '-' + j, 'x', ip); }));
+    rs.forEach(function (r) { estados.push(r.status); });
+  }
+  // 24 intentos: solo 21 pueden verificarse (hasta superar 20); el resto se rechaza antes de hashear.
+  assert.strictEqual(contar(estados, 401), 21, 'verificaciones realizadas: ' + estados);
+  assert.strictEqual(contar(estados, 429), 3);
+});
+
+test('V-05: changeOwnPassword también reserva el intento antes del hash (ráfaga paralela)', async function () {
+  var a = fresh();
+  var yo = a.list()[0].id;
+  var ip = '10.20.0.6';
+  var todos = [];
+  for (var ola = 0; ola < 2; ola++) {
+    var rs = await Promise.all([0, 1, 2, 3].map(function () { return a.changeOwnPassword(yo, 'incorrecta', 'clave-nueva-ok-1', null, ip); }));
+    rs.forEach(function (r) { todos.push(r); });
+  }
+  var verificados = todos.filter(function (r) { return /no es correcta|Se cerró la sesión/.test(r.errors[0]); });
+  var rechazados = todos.filter(function (r) { return r.status === 429 && /Demasiados intentos/.test(r.errors[0]) && !/Se cerró/.test(r.errors[0]); });
+  assert.strictEqual(verificados.length, 5, 'solo 5 contraseñas actuales se verifican: ' + JSON.stringify(todos.map(function (r) { return r.errors[0]; })));
+  assert.strictEqual(rechazados.length, 3);
+  // Con la clave actual correcta sigue sin poder cambiarla: bloqueada.
+  assert.strictEqual((await a.changeOwnPassword(yo, pw(a), 'clave-nueva-ok-1', null, ip)).status, 429);
+});
+
+test('R4: la clave de bloqueo ignora espacios y mayúsculas: " administrador", "administrador " y "ADMINISTRADOR" comparten contador', async function () {
+  var a = fresh();
+  var variantes = [' ' + authLib.DEFAULT_USER, authLib.DEFAULT_USER + ' ', authLib.DEFAULT_USER.toUpperCase(), '  ' + authLib.DEFAULT_USER + '  ', 'Administrador'];
+  for (var i = 0; i < variantes.length; i++) {
+    var r = await a.login(variantes[i], 'mala' + i, '10.7.7.7');
+    assert.strictEqual(r.status, 401, 'intento ' + (i + 1) + ' con ' + JSON.stringify(variantes[i]));
+  }
+  // Los 5 fallos, con grafías distintas, sumaron en la misma clave: ahora cualquier grafía queda bloqueada, incluso con la clave correcta.
+  var etiquetas = [authLib.DEFAULT_USER, ' ' + authLib.DEFAULT_USER, authLib.DEFAULT_USER.toUpperCase()];
+  for (var v of etiquetas) {
+    var b = await a.login(v, pw(a), '10.7.7.7');
+    assert.strictEqual(b.status, 429, 'bloqueada la grafía ' + JSON.stringify(v));
+    assert.strictEqual(b.sid, undefined);
+  }
+  assert.ok((await a.login(authLib.DEFAULT_USER, pw(a), '10.7.7.8')).sid, 'otra IP no se ve afectada');
+});
+
+test('R4: cambiar de grafía del usuario no reinicia el contador: 3 fallos + 2 con otra grafía bloquean', async function () {
+  var a = fresh();
+  for (var i = 0; i < 3; i++) assert.strictEqual((await a.login(authLib.DEFAULT_USER, 'mala' + i, '10.8.8.8')).status, 401);
+  assert.strictEqual((await a.login(' ADMINISTRADOR', 'x1', '10.8.8.8')).status, 401);
+  assert.strictEqual((await a.login('administrador ', 'x2', '10.8.8.8')).status, 401);
+  assert.strictEqual((await a.login(authLib.DEFAULT_USER, pw(a), '10.8.8.8')).status, 429);
+});

@@ -4,6 +4,7 @@
  * (estado UP / DEGRADADO / DOWN y la lista de razones que lo explican).
  */
 var http = require('http');
+var https = require('https');
 var Evaluate = require('../../js/core/evaluate.js');
 var validate = require('./validate');
 var u = require('./util');
@@ -50,33 +51,79 @@ function normalizeAgent(raw) {
   };
 }
 
+// Huella normalizada ('AA:BB:...') para comparar sin importar mayúsculas ni separadores.
+function normFp(v) { return String(v || '').replace(/:/g, '').toUpperCase(); }
+
+var AGENT_DEADLINE_MS = 10000; // plazo absoluto de una consulta al agente
+
 function agentFetch(ag, host, ip) {
   return new Promise(function (resolve) {
     var settled = false, req = null;
-    function done(v) { if (settled) return; settled = true; resolve(v); }
+    var useTls = ag.tls === true;
+    var pinned = useTls && ag.fingerprint ? normFp(ag.fingerprint) : '';
+    var timer = null;
+    function done(v) {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(v);
+    }
+    // Defensa en profundidad: con TLS y sin huella no se envía el token (objetivos guardados antes de exigirla).
+    if (useTls && !pinned) return done({ error: 'Falta la huella TLS del agente' });
+    // Plazo absoluto: 'timeout' del socket solo cubre inactividad y un servidor lento podría retener la petición.
+    timer = setTimeout(function () {
+      done({ error: 'El agente tardó demasiado en responder' });
+      if (req) req.destroy();
+    }, AGENT_DEADLINE_MS);
     var headers = {};
-    if (ag.token) headers.Authorization = 'Bearer ' + ag.token;
-    try {
-      req = http.get({ host: ip || host, port: ag.port, headers: headers, timeout: 6000,
-                       path: '/metrics?services=' + encodeURIComponent((ag.services || []).join(',')) }, function (res) {
-        var chunks = [], size = 0, over = false;
-        res.on('data', function (c) {
-          size += c.length;
-          if (size > AGENT_MAX_BODY) { over = true; done({ error: 'respuesta del agente demasiado grande' }); res.destroy(); return; }
-          chunks.push(c);
-        });
-        res.on('end', function () {
-          if (over) return;
-          if (res.statusCode === 401) return done({ error: 'token rechazado por el agente' });
-          if (res.statusCode === 429) return done({ error: 'el agente limitó las peticiones (demasiados intentos)' });
-          if (res.statusCode !== 200) return done({ error: 'el agente respondió HTTP ' + res.statusCode });
-          try { done(normalizeAgent(JSON.parse(Buffer.concat(chunks).toString('utf8')))); }
-          catch (e) { done({ error: 'respuesta del agente no válida' }); }
-        });
-        res.on('aborted', function () { done({ error: 'conexión con el agente interrumpida' }); });
-        res.on('error', function (e) { done({ error: u.friendlyError(e) }); });
-        res.on('close', function () { done({ error: 'conexión con el agente cerrada antes de terminar' }); });
+    var path = '/metrics?services=' + encodeURIComponent((ag.services || []).join(','));
+    var onResponse = function (res) {
+      var chunks = [], size = 0, over = false;
+      res.on('data', function (c) {
+        size += c.length;
+        if (size > AGENT_MAX_BODY) { over = true; done({ error: 'respuesta del agente demasiado grande' }); res.destroy(); return; }
+        chunks.push(c);
       });
+      res.on('end', function () {
+        if (over) return;
+        if (res.statusCode === 401) return done({ error: 'token rechazado por el agente' });
+        if (res.statusCode === 429) return done({ error: 'el agente limitó las peticiones (demasiados intentos)' });
+        if (res.statusCode !== 200) return done({ error: 'el agente respondió HTTP ' + res.statusCode });
+        try { done(normalizeAgent(JSON.parse(Buffer.concat(chunks).toString('utf8')))); }
+        catch (e) { done({ error: 'respuesta del agente no válida' }); }
+      });
+      res.on('aborted', function () { done({ error: 'conexión con el agente interrumpida' }); });
+      res.on('error', function (e) { done({ error: u.friendlyError(e) }); });
+      res.on('close', function () { done({ error: 'conexión con el agente cerrada antes de terminar' }); });
+    };
+    try {
+      if (!useTls) {
+        if (ag.token) headers.Authorization = 'Bearer ' + ag.token;
+        req = http.get({ host: ip || host, port: ag.port, headers: headers, timeout: 6000, path: path }, onResponse);
+      } else {
+        // La petición se crea sin el token y la cabecera se añade en 'secureConnect', solo si la huella
+        // del certificado presentado coincide con la fijada. Así el secreto nunca llega a un servidor falso.
+        // Con rejectUnauthorized:false la validación de la cadena no aplica: la autenticidad la da la huella.
+        req = https.request({ host: ip || host, port: ag.port, method: 'GET', headers: headers, timeout: 6000, path: path,
+                              rejectUnauthorized: false,
+                              // IMPORTANTE: agent:false evita reutilizar sockets y sesiones TLS. La protección del token
+                              // depende de ello: una conexión reutilizada ya no pasaría por la verificación de huella.
+                              agent: false }, onResponse);
+        req.on('socket', function (sock) {
+          sock.once('secureConnect', function () {
+            var cert = null;
+            try { cert = sock.getPeerCertificate(); } catch (e) { cert = null; }
+            var got = cert && cert.fingerprint256 ? normFp(cert.fingerprint256) : '';
+            if (pinned && got !== pinned) {
+              done({ error: 'La huella TLS del agente no coincide (posible suplantación)' });
+              req.destroy();
+              return;
+            }
+            if (ag.token) req.setHeader('Authorization', 'Bearer ' + ag.token);
+            req.end();
+          });
+        });
+      }
     } catch (e) { return done({ error: u.friendlyError(e) }); }
     req.on('timeout', function () { done({ error: 'tiempo agotado' }); req.destroy(Object.assign(new Error('timeout'), { code: 'ETIMEOUT' })); });
     req.on('error', function (e) { done({ error: u.friendlyError(e) }); });

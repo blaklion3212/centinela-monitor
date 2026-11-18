@@ -8,14 +8,25 @@
  *
  * Por defecto escucha solo en 127.0.0.1. Para verlo desde otros equipos usa HOST=0.0.0.0.
  * El acceso exige usuario y contraseña (usuarios en data/users.json, roles admin / operator / viewer).
+ *
+ * Variables de entorno de red y robustez (además de PORT, HOST, CENTINELA_AUTH, CENTINELA_COOKIE_SECURE...):
+ *   - CENTINELA_TRUST_PROXY: lista de IPs de proxies inversos de confianza, separadas por comas (p. ej. 127.0.0.1,10.0.0.5).
+ *     Solo si la conexión TCP llega desde una de ellas se lee X-Forwarded-For y la IP del cliente es la entrada más a la
+ *     derecha que NO sea un proxy de confianza. Esa IP (clientIp) se usa en los límites de login y de cambio de contraseña,
+ *     en el cupo de traceroute y en la clave SSE sin autenticación. Sin la variable, X-Forwarded-For se ignora.
+ *   - CENTINELA_CONCURRENCY y CENTINELA_CHECK_TIMEOUT_MS: ver server/lib/scheduler.js (las verificaciones colgadas tras el
+ *     plazo reducen la capacidad efectiva, sin bloquearla del todo).
+ *   - POST /api/targets/:id/check: intervalo mínimo de 5 s por objetivo entre verificaciones manuales (429 + Retry-After).
  */
 var http = require('http');
 var fs = require('fs');
 var os = require('os');
+var net = require('net');
 var path = require('path');
 
 var store = require('./lib/store').load();
 var validate = require('./lib/validate');
+var routes = require('./lib/routes');
 var Scheduler = require('./lib/scheduler').Scheduler;
 var tracer = require('./probes/traceroute');
 var authLib = require('./lib/auth');
@@ -134,7 +145,55 @@ function sendJson(res, code, obj, extraHeaders) {
   res.end(body);
 }
 
-function ipOf(req) { return req.socket.remoteAddress || ''; }
+// IPs de proxies de confianza (CENTINELA_TRUST_PROXY, separadas por comas). Vacío: X-Forwarded-For se ignora.
+function normIp(ip) { ip = String(ip || '').trim().toLowerCase(); return ip.indexOf('::ffff:') === 0 ? ip.slice(7) : ip; }
+// Entrada de X-Forwarded-For: quita corchetes y puerto ('a.b.c.d:port', '[v6]:port') y valida con net.isIP.
+// Devuelve la IP normalizada (IPv6 en minúsculas) o '' si no es una IP válida.
+function parseForwarded(v) {
+  v = String(v || '').trim().toLowerCase();
+  var m = /^\[([^\]]+)\](?::\d{1,5})?$/.exec(v);
+  if (m) v = m[1];
+  else if (/^\d{1,3}(\.\d{1,3}){3}:\d{1,5}$/.test(v)) v = v.slice(0, v.lastIndexOf(':'));
+  v = normIp(v);
+  return net.isIP(v) ? v : '';
+}
+// Proxies de confianza: solo IP literales; lo demás (p. ej. CIDR) se avisa y se ignora.
+var TRUSTED_PROXIES = String(process.env.CENTINELA_TRUST_PROXY || '').split(',').map(function (x) { return x.trim(); })
+  .filter(Boolean).map(function (x) {
+    var n = normIp(x);
+    if (!net.isIP(n)) { console.warn('CENTINELA_TRUST_PROXY: entrada ignorada (no es una IP): ' + x); return ''; }
+    return n;
+  }).filter(Boolean);
+function isTrustedProxy(ip) { return TRUSTED_PROXIES.indexOf(normIp(ip)) >= 0; }
+// IP del cliente: la remota, salvo que venga de un proxy de confianza; entonces, la entrada válida más a la derecha de
+// X-Forwarded-For que no sea un proxy de confianza (las entradas no válidas se descartan; si no hay ninguna, la remota).
+function clientIp(req) {
+  var remote = normIp(req.socket.remoteAddress);
+  if (!TRUSTED_PROXIES.length || !isTrustedProxy(remote)) return remote;
+  var xff = req.headers['x-forwarded-for'];
+  if (Array.isArray(xff)) xff = xff.join(',');
+  var parts = String(xff || '').split(',').map(parseForwarded).filter(Boolean);
+  for (var i = parts.length - 1; i >= 0; i--) if (!isTrustedProxy(parts[i])) return parts[i];
+  return remote;
+}
+var ipOf = clientIp;
+// Última verificación manual por objetivo (H-17): intervalo mínimo de 5 s.
+var MANUAL_MIN_MS = 5000;
+var lastManual = new Map();
+function pruneManual() {
+  var now = Date.now();
+  lastManual.forEach(function (t, k) {
+    // Se poda si ya pasó el intervalo y no corre, o si el objetivo ya no existe.
+    if ((now - t >= MANUAL_MIN_MS && !scheduler.isRunning(k)) || !store.findTarget(k)) lastManual.delete(k);
+  });
+  manualQuota.forEach(function (q, k) {
+    q.stamps = q.stamps.filter(function (t) { return now - t < MANUAL_WINDOW_MS; });
+    if (!q.inflight && !q.stamps.length) manualQuota.delete(k);
+  });
+}
+// Cupo de verificaciones manuales por usuario (o por IP sin auth): máx. 3 simultáneas y 30 por minuto.
+var MANUAL_MAX_INFLIGHT = 3, MANUAL_MAX_PER_MIN = 30, MANUAL_WINDOW_MS = 60000;
+var manualQuota = new Map(); // clave -> { inflight, stamps[] }
 function sidOf(req) { return authLib.parseCookies(req.headers.cookie)[auth.COOKIE] || null; }
 // Con CENTINELA_COOKIE_SECURE=1 la cookie lleva el atributo Secure (úsalo detrás de un proxy con TLS;
 // sin HTTPS el navegador no la enviaría).
@@ -178,6 +237,7 @@ function noOrg(res) { return sendJson(res, 404, { error: 'Organización no encon
 function orgsPayload() { return { orgs: store.getOrgs(), statuses: scheduler.statuses() }; }
 function targetsChanged(orgId) {
   scheduler.reschedule();
+  pruneManual();
   broadcast('targets', { org: orgId, targets: publicList(orgId), statuses: scheduler.statuses(), orgs: store.getOrgs() });
 }
 
@@ -214,6 +274,293 @@ function uniqueId(id, taken) {
   return n;
 }
 
+/*
+ * Manejadores de la API. Todos reciben un contexto c = { req, res, url, me, params, p, m }:
+ * `me` es el usuario autenticado (o el local con auth off) y `params` los parámetros de la ruta (':id').
+ * Los que responden por sí mismos (sendJson) no devuelven nada; las funciones `pre` de las rutas devuelven true
+ * si ya respondieron (en ese caso no se ejecuta el manejador).
+ */
+function notFound(c) { return sendJson(c.res, 404, { error: 'Ruta no encontrada' }); }
+
+// Públicas: comprobación de vida (sin datos del equipo) e inicio de sesión.
+function hHealth(c) { return sendJson(c.res, 200, { ok: true, mode: 'live', auth: AUTH_ON }); }
+async function hLogin(c) {
+  if (!AUTH_ON) return sendJson(c.res, 400, { error: 'La autenticación está desactivada en este servidor.' });
+  var lb0 = await readBody(c.req);
+  var lr = await auth.login(lb0.username, lb0.password, ipOf(c.req));
+  if (lr.error) return sendJson(c.res, lr.status || 401, { error: lr.error });
+  return sendJson(c.res, 200, { user: lr.user }, { 'Set-Cookie': sessionCookie(lr.sid, Math.floor(auth.SESSION_MS / 1000)) });
+}
+
+// Sesión propia.
+function hLogout(c) {
+  auth.logout(sidOf(c.req));
+  return sendJson(c.res, 200, { ok: true }, { 'Set-Cookie': sessionCookie('', 0) });
+}
+function hMe(c) {
+  var meBody = { user: userView(c.me), authEnabled: AUTH_ON };
+  // Datos del equipo servidor: solo para administradores.
+  if (c.me.role === 'admin') meBody.server = { host: os.hostname(), platform: process.platform, node: process.version, version: pkg.version };
+  return sendJson(c.res, 200, meBody);
+}
+async function hPassword(c) {
+  if (!AUTH_ON) return sendJson(c.res, 400, { errors: ['La autenticación está desactivada.'] });
+  var pb = await readBody(c.req);
+  var pr = await auth.changeOwnPassword(c.me.id, pb.current, pb.next, sidOf(c.req), ipOf(c.req));
+  if (pr.errors) return sendJson(c.res, pr.status || 400, { errors: pr.errors }, pr.closeSession ? { 'Set-Cookie': sessionCookie('', 0) } : null);
+  return sendJson(c.res, 200, { user: pr.value });
+}
+
+// Gestión de usuarios (solo administradores).
+function hUsersList(c) { return sendJson(c.res, 200, { users: auth.list(), roles: auth.ROLES, minPassword: auth.MIN_PASSWORD }); }
+async function hUsersCreate(c) {
+  var newUserBody = await readBody(c.req);
+  var newUserRes = await auth.create(newUserBody);
+  if (newUserRes.errors) return sendJson(c.res, newUserRes.status || 400, { errors: newUserRes.errors });
+  return sendJson(c.res, 201, { user: newUserRes.value });
+}
+async function hUsersUpdate(c) {
+  var ub1 = await readBody(c.req);
+  var ur1 = await auth.update(c.params.id, ub1, c.me.id, sidOf(c.req));
+  if (ur1.errors) return sendJson(c.res, ur1.status || 400, { errors: ur1.errors });
+  return sendJson(c.res, 200, { user: ur1.value });
+}
+function hUsersRemove(c) {
+  var dr0 = auth.remove(c.params.id, c.me.id);
+  if (dr0.errors) return sendJson(c.res, dr0.status || 400, { errors: dr0.errors });
+  return sendJson(c.res, 200, { ok: true });
+}
+function methodNotAllowed(c) { return sendJson(c.res, 405, { error: 'Método no permitido' }); }
+
+// Estado completo, organizaciones y flujo en vivo.
+function hState(c) {
+  var so = orgOf(c.url); if (!so) return noOrg(c.res);
+  var snap = scheduler.snapshot(so);
+  return sendJson(c.res, 200, { org: so, orgs: store.getOrgs(), statuses: scheduler.statuses(), targets: publicList(so),
+                                settings: store.getSettings(), results: snap.results, history: snap.history,
+                                events: snap.events, serverTime: Date.now() });
+}
+function hOrgsList(c) { return sendJson(c.res, 200, orgsPayload()); }
+async function hOrgsCreate(c) {
+  var ob = await readBody(c.req);
+  var orr = store.addOrg(ob);
+  if (orr.errors) return sendJson(c.res, 400, { errors: orr.errors });
+  broadcast('orgs', orgsPayload());
+  return sendJson(c.res, 201, { org: orr.value });
+}
+// Las rutas /api/orgs/:id comprueban que la organización exista antes de mirar el método.
+function preOrgParam(c) { if (!store.hasOrg(c.params.id)) { noOrg(c.res); return true; } }
+async function hOrgsUpdate(c) {
+  var orgBody = await readBody(c.req);
+  var orgUpdRes = store.updateOrg(c.params.id, orgBody);
+  if (orgUpdRes.errors) return sendJson(c.res, 400, { errors: orgUpdRes.errors });
+  broadcast('orgs', orgsPayload());
+  return sendJson(c.res, 200, { org: orgUpdRes.value });
+}
+function hOrgsRemove(c) {
+  var dr = store.removeOrg(c.params.id);
+  if (dr.errors) return sendJson(c.res, 400, { errors: dr.errors });
+  scheduler.reschedule();
+  broadcast('orgs', orgsPayload());
+  return sendJson(c.res, 200, { ok: true });
+}
+
+function hStream(c) {
+  var req = c.req, res = c.res;
+  var streamSid = sidOf(req) || 'local';
+  var streamKey = AUTH_ON ? streamSid : ipOf(req);
+  var streamUser = AUTH_ON ? c.me.id : ipOf(req);
+  // Se cierra el flujo más antiguo de la clave (y del usuario) hasta que quepa el nuevo.
+  evictOldest('key', streamKey, MAX_STREAMS_PER_KEY);
+  evictOldest('user', streamUser, MAX_STREAMS_PER_USER);
+  if (clients.size >= MAX_STREAMS) return sendJson(res, 429, { error: 'Demasiados flujos en vivo abiertos' });
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', 'Connection': 'keep-alive',
+                       'X-Accel-Buffering': 'no', 'X-Content-Type-Options': 'nosniff' });
+  res.write('retry: 3000\n\n');
+  var ka = setInterval(function () {
+    // Si la sesión terminó (cierre, usuario deshabilitado o eliminado, caducidad), se corta el flujo en vivo.
+    if (AUTH_ON && !auth.fromSid(streamSid, true)) return dropClient(res);
+    try { res.write(': ka\n\n'); } catch (e) { dropClient(res); }
+  }, 20000);
+  clients.set(res, { sid: streamSid, key: streamKey, user: streamUser, ka: ka });
+  req.on('close', function () { dropClient(res); });
+  res.on('close', function () { dropClient(res); });
+  res.on('error', function () { dropClient(res); });
+}
+
+// Ajustes, disposición y traceroute.
+function hSettingsGet(c) { return sendJson(c.res, 200, store.getSettings()); }
+async function hSettingsPut(c) {
+  var body = await readBody(c.req);
+  if (typeof validate.settingsErrors === 'function') {
+    var setErrs = validate.settingsErrors(body, store.getSettings());
+    if (setErrs && setErrs.length) return sendJson(c.res, 400, { errors: setErrs });
+  }
+  var next = validate.sanitizeSettings(body, store.getSettings());
+  store.saveSettings(next);
+  broadcast('settings', next);
+  return sendJson(c.res, 200, next);
+}
+// Las rutas con ?org= resuelven la organización (c.org) antes de mirar el método.
+function preOrgQuery(c) { c.org = orgOf(c.url); if (!c.org) { noOrg(c.res); return true; } }
+function hLayoutGet(c) { return sendJson(c.res, 200, { layout: store.getLayout(c.org) }); }
+async function hLayoutPut(c) {
+  var lb = await readBody(c.req);
+  return sendJson(c.res, 200, { layout: store.saveLayout(c.org, lb) });
+}
+async function hTraceroute(c) {
+  var res = c.res, me = c.me;
+  var tb = await readBody(c.req);
+  var host = null;
+  if (me.role === 'viewer' && !tb.targetId) return sendJson(res, 403, { error: 'Tu usuario solo puede hacer traceroute a objetivos existentes' });
+  if (tb.targetId) {
+    var tt = findTarget(String(tb.targetId));
+    if (!tt) return sendJson(res, 404, { error: 'Objetivo no encontrado' });
+    host = validate.hostFromAddress(tt.kind, tt.address);
+  } else host = String(tb.address || '').trim();
+  if (!validate.isValidHost(host)) return sendJson(res, 400, { error: 'Dirección no válida para traceroute' });
+  var traceKey = AUTH_ON ? me.id : ipOf(c.req); // con auth off todos son 'local': el cupo es por IP
+  if (traceByUser[traceKey]) return sendJson(res, 429, { error: 'Ya tienes un traceroute en curso' });
+  if (traceActive >= 3) return sendJson(res, 429, { error: 'Hay demasiados traceroute en curso, intenta en unos segundos' });
+  traceActive++; traceByUser[traceKey] = true;
+  try { return sendJson(res, 200, Object.assign({ host: host }, await tracer.trace(host))); }
+  finally { traceActive--; delete traceByUser[traceKey]; }
+}
+
+// Objetivos.
+function hTargetsList(c) { return sendJson(c.res, 200, { targets: publicList(c.org) }); }
+async function hTargetsCreate(c) {
+  var to = c.org, res = c.res;
+  var cb = await readBody(c.req);
+  if (store.getTargets(to).length >= MAX_TARGETS) return sendJson(res, 400, { errors: ['Se alcanzó el máximo de ' + MAX_TARGETS + ' objetivos.'] });
+  var cr = validate.sanitizeTarget(cb, null, store.getSettings());
+  if (cr.errors.length) return sendJson(res, 400, { errors: cr.errors });
+  cr.value.id = uniqueId(cr.value.id, takenIds());
+  store.saveTargets(to, store.getTargets(to).concat([cr.value]));
+  targetsChanged(to);
+  return sendJson(res, 201, { target: validate.publicTarget(cr.value) });
+}
+async function hTargetsReplace(c) { // reemplazo total (importar)
+  var to = c.org, res = c.res;
+  var ib = await readBody(c.req);
+  var arr = Array.isArray(ib.targets) ? ib.targets : null;
+  if (!arr) return sendJson(res, 400, { errors: ['Se esperaba { "targets": [...] }'] });
+  if (arr.length > MAX_TARGETS) return sendJson(res, 400, { errors: ['Máximo ' + MAX_TARGETS + ' objetivos.'] });
+  var errs = [], seen = takenIds(to), out = [];
+  arr.forEach(function (x, i) {
+    var prev = x && x.id ? findTarget(String(x.id)) : null; // conserva el token del agente de objetivos existentes
+    if (prev && store.orgOf(prev.id) !== to) prev = null;
+    var r = validate.sanitizeTarget(x, prev, store.getSettings());
+    if (r.errors.length) errs.push('Fila ' + (i + 1) + ': ' + r.errors.join(' '));
+    else { r.value.id = uniqueId(r.value.id, seen); seen[r.value.id] = true; out.push(r.value); }
+  });
+  if (errs.length) return sendJson(res, 400, { errors: errs.slice(0, 20) });
+  store.saveTargets(to, out);
+  targetsChanged(to);
+  return sendJson(res, 200, { targets: publicList(to) });
+}
+// Las rutas /api/targets/:id buscan el objetivo (c.existing) antes de mirar el método. En el PUT el cuerpo se lee
+// antes de buscar: durante la lectura pudo borrarse.
+function preTarget(c) {
+  c.existing = findTarget(c.params.id);
+  if (!c.existing) { sendJson(c.res, 404, { error: 'Objetivo no encontrado' }); return true; }
+}
+async function preTargetBody(c) { c.body = await readBody(c.req); return preTarget(c); }
+async function hTargetCheck(c) {
+  var id = c.params.id;
+  // Si la verificación excede CENTINELA_CHECK_TIMEOUT_MS, runOne no lanza: devuelve un resultado DOWN
+  // con motivo code 'timeout', que se responde con 200 como cualquier otro resultado.
+  if (scheduler.isRunning(id)) return sendJson(c.res, 409, { error: 'Ya hay una verificación en curso para este objetivo' });
+  var nowM = Date.now(), lastM = lastManual.get(id) || 0;
+  if (nowM - lastM < MANUAL_MIN_MS) {
+    var wait = Math.max(1, Math.ceil((MANUAL_MIN_MS - (nowM - lastM)) / 1000));
+    return sendJson(c.res, 429, { error: 'Espera unos segundos antes de volver a verificar este objetivo' }, { 'Retry-After': String(wait) });
+  }
+  var qKey = AUTH_ON ? c.me.id : ipOf(c.req);
+  var q = manualQuota.get(qKey);
+  if (!q) { q = { inflight: 0, stamps: [] }; manualQuota.set(qKey, q); }
+  q.stamps = q.stamps.filter(function (t) { return nowM - t < MANUAL_WINDOW_MS; });
+  if (q.inflight >= MANUAL_MAX_INFLIGHT || q.stamps.length >= MANUAL_MAX_PER_MIN) {
+    var qWait = q.inflight >= MANUAL_MAX_INFLIGHT || !q.stamps.length ? 5 : Math.max(1, Math.ceil((MANUAL_WINDOW_MS - (nowM - q.stamps[0])) / 1000));
+    return sendJson(c.res, 429, { error: 'Demasiadas verificaciones manuales; espera un momento' }, { 'Retry-After': String(qWait) });
+  }
+  q.inflight++; q.stamps.push(nowM);
+  lastManual.set(id, nowM); // se reserva antes de verificar; se actualiza al terminar
+  var rr;
+  try { rr = await scheduler.runOne(c.existing); } finally { q.inflight--; lastManual.set(id, Date.now()); pruneManual(); }
+  return sendJson(c.res, 200, { result: rr });
+}
+function hTargetUpdate(c) {
+  var id = c.params.id, res = c.res;
+  var ur = validate.sanitizeTarget(c.body, c.existing, store.getSettings());
+  if (ur.errors.length) return sendJson(res, 400, { errors: ur.errors });
+  ur.value.id = id;
+  var uo = store.orgOf(id);
+  if (!uo) return sendJson(res, 404, { error: 'Objetivo no encontrado' });
+  store.saveTargets(uo, store.getTargets(uo).map(function (t) { return t.id === id ? ur.value : t; }));
+  targetsChanged(uo);
+  return sendJson(res, 200, { target: validate.publicTarget(ur.value) });
+}
+function hTargetRemove(c) {
+  var id = c.params.id;
+  var dorg = store.orgOf(id);
+  if (!dorg) return sendJson(c.res, 404, { error: 'Objetivo no encontrado' });
+  store.saveTargets(dorg, store.getTargets(dorg).filter(function (t) { return t.id !== id; }));
+  targetsChanged(dorg);
+  return sendJson(c.res, 200, { ok: true });
+}
+
+/*
+ * Tabla de rutas. Gana la PRIMERA que coincide en método y patrón; las entradas con method '*' al final de cada grupo
+ * reproducen lo que ocurre con un método no previsto (405 en usuarios; en el resto, 404 tras las comprobaciones previas).
+ * Campos:
+ *   - access: 'public' (sin sesión) | 'session' (cualquier usuario con sesión, incluso lectores) | 'admin' |
+ *             'standard' (los lectores solo pueden hacer lecturas y los diagnósticos de readOnlyAllowed).
+ *   - mustChange: con la contraseña por defecto sin cambiar, la ruta sigue permitida.
+ *   - pre: comprobación previa al manejador; devuelve true si ya respondió.
+ * Rutas no listadas (o con otro método): 404 'Ruta no encontrada', tras la sesión y el control de lectores.
+ */
+var ID_USER = '[A-Za-z0-9_]{1,40}', ID_ORG = '[a-z0-9]{1,32}', ID_TARGET = '[A-Za-z0-9_-]{1,64}';
+var ROUTES = [
+  { method: 'GET',    pattern: '/api/health',         access: 'public', handler: hHealth },
+  { method: 'POST',   pattern: '/api/auth/login',     access: 'public', handler: hLogin },
+
+  { method: 'POST',   pattern: '/api/auth/logout',    access: 'session', mustChange: true, handler: hLogout },
+  { method: 'GET',    pattern: '/api/auth/me',        access: 'session', mustChange: true, handler: hMe },
+  { method: 'POST',   pattern: '/api/auth/password',  access: 'session', mustChange: true, handler: hPassword },
+
+  { method: 'GET',    pattern: '/api/users',          access: 'admin', handler: hUsersList },
+  { method: 'POST',   pattern: '/api/users',          access: 'admin', handler: hUsersCreate },
+  { method: '*',      pattern: '/api/users',          access: 'admin', handler: methodNotAllowed },
+  { method: 'PUT',    pattern: '/api/users/:id',      params: { id: ID_USER }, access: 'admin', handler: hUsersUpdate },
+  { method: 'DELETE', pattern: '/api/users/:id',      params: { id: ID_USER }, access: 'admin', handler: hUsersRemove },
+  { method: '*',      pattern: '/api/users/:id',      params: { id: ID_USER }, access: 'admin', handler: methodNotAllowed },
+
+  { method: 'GET',    pattern: '/api/state',          access: 'standard', handler: hState },
+  { method: 'GET',    pattern: '/api/orgs',           access: 'standard', handler: hOrgsList },
+  { method: 'POST',   pattern: '/api/orgs',           access: 'standard', handler: hOrgsCreate },
+  { method: 'PUT',    pattern: '/api/orgs/:id',       params: { id: ID_ORG }, access: 'standard', pre: preOrgParam, handler: hOrgsUpdate },
+  { method: 'DELETE', pattern: '/api/orgs/:id',       params: { id: ID_ORG }, access: 'standard', pre: preOrgParam, handler: hOrgsRemove },
+  { method: '*',      pattern: '/api/orgs/:id',       params: { id: ID_ORG }, access: 'standard', pre: preOrgParam, handler: notFound },
+  { method: 'GET',    pattern: '/api/stream',         access: 'standard', handler: hStream },
+  { method: 'GET',    pattern: '/api/settings',       access: 'standard', handler: hSettingsGet },
+  { method: 'PUT',    pattern: '/api/settings',       access: 'standard', handler: hSettingsPut },
+  { method: 'GET',    pattern: '/api/layout',         access: 'standard', pre: preOrgQuery, handler: hLayoutGet },
+  { method: 'PUT',    pattern: '/api/layout',         access: 'standard', pre: preOrgQuery, handler: hLayoutPut },
+  { method: '*',      pattern: '/api/layout',         access: 'standard', pre: preOrgQuery, handler: notFound },
+  { method: 'POST',   pattern: '/api/traceroute',     access: 'standard', handler: hTraceroute },
+  { method: 'GET',    pattern: '/api/targets',        access: 'standard', pre: preOrgQuery, handler: hTargetsList },
+  { method: 'POST',   pattern: '/api/targets',        access: 'standard', pre: preOrgQuery, handler: hTargetsCreate },
+  { method: 'PUT',    pattern: '/api/targets',        access: 'standard', pre: preOrgQuery, handler: hTargetsReplace },
+  { method: '*',      pattern: '/api/targets',        access: 'standard', pre: preOrgQuery, handler: notFound },
+  { method: 'PUT',    pattern: '/api/targets/:id',    params: { id: ID_TARGET }, access: 'standard', pre: preTargetBody, handler: hTargetUpdate },
+  { method: 'DELETE', pattern: '/api/targets/:id',    params: { id: ID_TARGET }, access: 'standard', pre: preTarget, handler: hTargetRemove },
+  { method: '*',      pattern: '/api/targets/:id',    params: { id: ID_TARGET }, access: 'standard', pre: preTarget, handler: notFound },
+  { method: 'POST',   pattern: '/api/targets/:id/check', params: { id: ID_TARGET }, access: 'standard', pre: preTarget, handler: hTargetCheck },
+  { method: '*',      pattern: '/api/targets/:id/check', params: { id: ID_TARGET }, access: 'standard', pre: preTarget, handler: notFound }
+];
+var router = routes.createRouter(ROUTES);
+
 async function api(req, res, url) {
   var p = url.pathname, m = req.method;
 
@@ -228,246 +575,34 @@ async function api(req, res, url) {
     if (oh !== req.headers.host) return sendJson(res, 403, { error: 'Origen no permitido' });
   }
 
-  // Públicas: comprobación de vida (sin datos del equipo) e inicio de sesión.
-  if (p === '/api/health' && m === 'GET') return sendJson(res, 200, { ok: true, mode: 'live', auth: AUTH_ON });
-  if (p === '/api/auth/login' && m === 'POST') {
-    if (!AUTH_ON) return sendJson(res, 400, { error: 'La autenticación está desactivada en este servidor.' });
-    var lb0 = await readBody(req);
-    var lr = await auth.login(lb0.username, lb0.password, ipOf(req));
-    if (lr.error) return sendJson(res, lr.status || 401, { error: lr.error });
-    return sendJson(res, 200, { user: lr.user }, { 'Set-Cookie': sessionCookie(lr.sid, Math.floor(auth.SESSION_MS / 1000)) });
-  }
+  var hit = router.match(m, p), route = hit && hit.route;
+  var c = { req: req, res: res, url: url, me: null, params: hit ? hit.params : {}, p: p, m: m };
+
+  // Públicas: comprobación de vida e inicio de sesión.
+  if (route && route.access === 'public') return route.handler(c);
 
   // Todo lo demás exige sesión.
   var me = AUTH_ON ? auth.fromSid(sidOf(req)) : LOCAL_USER;
   if (!me) return sendJson(res, 401, { error: 'Inicia sesión para continuar', login: true });
+  c.me = me;
   var write = m !== 'GET' && m !== 'HEAD';
 
   // Contraseña por defecto: hasta cambiarla solo se permite consultar la sesión, cambiar la contraseña y salir.
-  if (AUTH_ON && me.defaultPassword &&
-      !((p === '/api/auth/me' && m === 'GET') || (p === '/api/auth/password' && m === 'POST') || (p === '/api/auth/logout' && m === 'POST'))) {
+  if (AUTH_ON && me.defaultPassword && !(route && route.mustChange)) {
     return sendJson(res, 403, { error: 'Debes cambiar la contraseña antes de continuar', mustChange: true });
   }
 
-  if (p === '/api/auth/logout' && m === 'POST') {
-    auth.logout(sidOf(req));
-    return sendJson(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie('', 0) });
-  }
-  if (p === '/api/auth/me' && m === 'GET') {
-    var meBody = { user: userView(me), authEnabled: AUTH_ON };
-    // Datos del equipo servidor: solo para administradores.
-    if (me.role === 'admin') meBody.server = { host: os.hostname(), platform: process.platform, node: process.version, version: pkg.version };
-    return sendJson(res, 200, meBody);
-  }
-  if (p === '/api/auth/password' && m === 'POST') {
-    if (!AUTH_ON) return sendJson(res, 400, { errors: ['La autenticación está desactivada.'] });
-    var pb = await readBody(req);
-    var pr = await auth.changeOwnPassword(me.id, pb.current, pb.next, sidOf(req), ipOf(req));
-    if (pr.errors) return sendJson(res, pr.status || 400, { errors: pr.errors }, pr.closeSession ? { 'Set-Cookie': sessionCookie('', 0) } : null);
-    return sendJson(res, 200, { user: pr.value });
-  }
-
   // Gestión de usuarios: solo administradores.
-  if (p === '/api/users' || /^\/api\/users\/[A-Za-z0-9_]{1,40}$/.test(p)) {
-    if (me.role !== 'admin') return sendJson(res, 403, { error: 'Solo un administrador puede gestionar usuarios' });
-    if (p === '/api/users') {
-      if (m === 'GET') return sendJson(res, 200, { users: auth.list(), roles: auth.ROLES, minPassword: auth.MIN_PASSWORD });
-      if (m === 'POST') {
-        var newUserBody = await readBody(req);
-        var newUserRes = await auth.create(newUserBody);
-        if (newUserRes.errors) return sendJson(res, newUserRes.status || 400, { errors: newUserRes.errors });
-        return sendJson(res, 201, { user: newUserRes.value });
-      }
-    } else {
-      var uid = p.split('/')[3];
-      if (m === 'PUT') {
-        var ub1 = await readBody(req);
-        var ur1 = await auth.update(uid, ub1, me.id, sidOf(req));
-        if (ur1.errors) return sendJson(res, ur1.status || 400, { errors: ur1.errors });
-        return sendJson(res, 200, { user: ur1.value });
-      }
-      if (m === 'DELETE') {
-        var dr0 = auth.remove(uid, me.id);
-        if (dr0.errors) return sendJson(res, dr0.status || 400, { errors: dr0.errors });
-        return sendJson(res, 200, { ok: true });
-      }
-    }
-    return sendJson(res, 405, { error: 'Método no permitido' });
+  if (route && route.access === 'admin' && me.role !== 'admin') return sendJson(res, 403, { error: 'Solo un administrador puede gestionar usuarios' });
+
+  // Lectores: solo consulta (y diagnósticos de solo lectura). También rige para rutas desconocidas.
+  if ((!route || route.access === 'standard') && write && me.role === 'viewer' && !readOnlyAllowed(p)) {
+    return sendJson(res, 403, { error: 'Tu usuario es de solo lectura' });
   }
 
-  // Lectores: solo consulta (y diagnósticos de solo lectura).
-  if (write && me.role === 'viewer' && !readOnlyAllowed(p)) return sendJson(res, 403, { error: 'Tu usuario es de solo lectura' });
-
-  if (p === '/api/state' && m === 'GET') {
-    var so = orgOf(url); if (!so) return noOrg(res);
-    var snap = scheduler.snapshot(so);
-    return sendJson(res, 200, { org: so, orgs: store.getOrgs(), statuses: scheduler.statuses(), targets: publicList(so),
-                                settings: store.getSettings(), results: snap.results, history: snap.history,
-                                events: snap.events, serverTime: Date.now() });
-  }
-
-  if (p === '/api/orgs') {
-    if (m === 'GET') return sendJson(res, 200, orgsPayload());
-    if (m === 'POST') {
-      var ob = await readBody(req);
-      var orr = store.addOrg(ob);
-      if (orr.errors) return sendJson(res, 400, { errors: orr.errors });
-      broadcast('orgs', orgsPayload());
-      return sendJson(res, 201, { org: orr.value });
-    }
-  }
-  var mo = /^\/api\/orgs\/([a-z0-9]{1,32})$/.exec(p);
-  if (mo) {
-    if (!store.hasOrg(mo[1])) return noOrg(res);
-    if (m === 'PUT') {
-      var orgBody = await readBody(req);
-      var orgUpdRes = store.updateOrg(mo[1], orgBody);
-      if (orgUpdRes.errors) return sendJson(res, 400, { errors: orgUpdRes.errors });
-      broadcast('orgs', orgsPayload());
-      return sendJson(res, 200, { org: orgUpdRes.value });
-    }
-    if (m === 'DELETE') {
-      var dr = store.removeOrg(mo[1]);
-      if (dr.errors) return sendJson(res, 400, { errors: dr.errors });
-      scheduler.reschedule();
-      broadcast('orgs', orgsPayload());
-      return sendJson(res, 200, { ok: true });
-    }
-  }
-
-  if (p === '/api/stream' && m === 'GET') {
-    var streamSid = sidOf(req) || 'local';
-    var streamKey = AUTH_ON ? streamSid : ipOf(req);
-    var streamUser = AUTH_ON ? me.id : ipOf(req);
-    // Se cierra el flujo más antiguo de la clave (y del usuario) hasta que quepa el nuevo.
-    evictOldest('key', streamKey, MAX_STREAMS_PER_KEY);
-    evictOldest('user', streamUser, MAX_STREAMS_PER_USER);
-    if (clients.size >= MAX_STREAMS) return sendJson(res, 429, { error: 'Demasiados flujos en vivo abiertos' });
-    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', 'Connection': 'keep-alive',
-                         'X-Accel-Buffering': 'no', 'X-Content-Type-Options': 'nosniff' });
-    res.write('retry: 3000\n\n');
-    var ka = setInterval(function () {
-      // Si la sesión terminó (cierre, usuario deshabilitado o eliminado, caducidad), se corta el flujo en vivo.
-      if (AUTH_ON && !auth.fromSid(streamSid, true)) return dropClient(res);
-      try { res.write(': ka\n\n'); } catch (e) { dropClient(res); }
-    }, 20000);
-    clients.set(res, { sid: streamSid, key: streamKey, user: streamUser, ka: ka });
-    req.on('close', function () { dropClient(res); });
-    res.on('close', function () { dropClient(res); });
-    res.on('error', function () { dropClient(res); });
-    return;
-  }
-
-  if (p === '/api/settings') {
-    if (m === 'GET') return sendJson(res, 200, store.getSettings());
-    if (m === 'PUT') {
-      var body = await readBody(req);
-      if (typeof validate.settingsErrors === 'function') {
-        var setErrs = validate.settingsErrors(body, store.getSettings());
-        if (setErrs && setErrs.length) return sendJson(res, 400, { errors: setErrs });
-      }
-      var next = validate.sanitizeSettings(body, store.getSettings());
-      store.saveSettings(next);
-      broadcast('settings', next);
-      return sendJson(res, 200, next);
-    }
-  }
-
-  if (p === '/api/layout') {
-    var lo = orgOf(url); if (!lo) return noOrg(res);
-    if (m === 'GET') return sendJson(res, 200, { layout: store.getLayout(lo) });
-    if (m === 'PUT') {
-      var lb = await readBody(req);
-      return sendJson(res, 200, { layout: store.saveLayout(lo, lb) });
-    }
-  }
-
-  if (p === '/api/traceroute' && m === 'POST') {
-    var tb = await readBody(req);
-    var host = null;
-    if (me.role === 'viewer' && !tb.targetId) return sendJson(res, 403, { error: 'Tu usuario solo puede hacer traceroute a objetivos existentes' });
-    if (tb.targetId) {
-      var tt = findTarget(String(tb.targetId));
-      if (!tt) return sendJson(res, 404, { error: 'Objetivo no encontrado' });
-      host = validate.hostFromAddress(tt.kind, tt.address);
-    } else host = String(tb.address || '').trim();
-    if (!validate.isValidHost(host)) return sendJson(res, 400, { error: 'Dirección no válida para traceroute' });
-    var traceKey = AUTH_ON ? me.id : ipOf(req); // con auth off todos son 'local': el cupo es por IP
-    if (traceByUser[traceKey]) return sendJson(res, 429, { error: 'Ya tienes un traceroute en curso' });
-    if (traceActive >= 3) return sendJson(res, 429, { error: 'Hay demasiados traceroute en curso, intenta en unos segundos' });
-    traceActive++; traceByUser[traceKey] = true;
-    try { return sendJson(res, 200, Object.assign({ host: host }, await tracer.trace(host))); }
-    finally { traceActive--; delete traceByUser[traceKey]; }
-  }
-
-  if (p === '/api/targets') {
-    var to = orgOf(url); if (!to) return noOrg(res);
-    if (m === 'GET') return sendJson(res, 200, { targets: publicList(to) });
-    if (m === 'POST') {
-      var cb = await readBody(req);
-      if (store.getTargets(to).length >= MAX_TARGETS) return sendJson(res, 400, { errors: ['Se alcanzó el máximo de ' + MAX_TARGETS + ' objetivos.'] });
-      var cr = validate.sanitizeTarget(cb, null, store.getSettings());
-      if (cr.errors.length) return sendJson(res, 400, { errors: cr.errors });
-      cr.value.id = uniqueId(cr.value.id, takenIds());
-      store.saveTargets(to, store.getTargets(to).concat([cr.value]));
-      targetsChanged(to);
-      return sendJson(res, 201, { target: validate.publicTarget(cr.value) });
-    }
-    if (m === 'PUT') { // reemplazo total (importar)
-      var ib = await readBody(req);
-      var arr = Array.isArray(ib.targets) ? ib.targets : null;
-      if (!arr) return sendJson(res, 400, { errors: ['Se esperaba { "targets": [...] }'] });
-      if (arr.length > MAX_TARGETS) return sendJson(res, 400, { errors: ['Máximo ' + MAX_TARGETS + ' objetivos.'] });
-      var errs = [], seen = takenIds(to), out = [];
-      arr.forEach(function (x, i) {
-        var prev = x && x.id ? findTarget(String(x.id)) : null; // conserva el token del agente de objetivos existentes
-        if (prev && store.orgOf(prev.id) !== to) prev = null;
-        var r = validate.sanitizeTarget(x, prev, store.getSettings());
-        if (r.errors.length) errs.push('Fila ' + (i + 1) + ': ' + r.errors.join(' '));
-        else { r.value.id = uniqueId(r.value.id, seen); seen[r.value.id] = true; out.push(r.value); }
-      });
-      if (errs.length) return sendJson(res, 400, { errors: errs.slice(0, 20) });
-      store.saveTargets(to, out);
-      targetsChanged(to);
-      return sendJson(res, 200, { targets: publicList(to) });
-    }
-  }
-
-  var mt = /^\/api\/targets\/([A-Za-z0-9_-]{1,64})(\/check)?$/.exec(p);
-  if (mt) {
-    var id = mt[1], existing = null, ub = null;
-    // En PUT el cuerpo se lee antes de buscar el objetivo: durante la lectura pudo borrarse.
-    if (!mt[2] && m === 'PUT') ub = await readBody(req);
-    existing = findTarget(id);
-    if (!existing) return sendJson(res, 404, { error: 'Objetivo no encontrado' });
-
-    if (mt[2] && m === 'POST') {
-      // Si la verificación excede CENTINELA_CHECK_TIMEOUT_MS, runOne no lanza: devuelve un resultado DOWN
-      // con motivo code 'timeout', que se responde con 200 como cualquier otro resultado.
-      if (scheduler.isRunning(id)) return sendJson(res, 409, { error: 'Ya hay una verificación en curso para este objetivo' });
-      var rr = await scheduler.runOne(existing);
-      return sendJson(res, 200, { result: rr });
-    }
-    if (!mt[2] && m === 'PUT') {
-      var ur = validate.sanitizeTarget(ub, existing, store.getSettings());
-      if (ur.errors.length) return sendJson(res, 400, { errors: ur.errors });
-      ur.value.id = id;
-      var uo = store.orgOf(id);
-      if (!uo) return sendJson(res, 404, { error: 'Objetivo no encontrado' });
-      store.saveTargets(uo, store.getTargets(uo).map(function (t) { return t.id === id ? ur.value : t; }));
-      targetsChanged(uo);
-      return sendJson(res, 200, { target: validate.publicTarget(ur.value) });
-    }
-    if (!mt[2] && m === 'DELETE') {
-      var dorg = store.orgOf(id);
-      if (!dorg) return sendJson(res, 404, { error: 'Objetivo no encontrado' });
-      store.saveTargets(dorg, store.getTargets(dorg).filter(function (t) { return t.id !== id; }));
-      targetsChanged(dorg);
-      return sendJson(res, 200, { ok: true });
-    }
-  }
-
-  return sendJson(res, 404, { error: 'Ruta no encontrada' });
+  if (!route) return notFound(c);
+  if (route.pre && await route.pre(c)) return;
+  return route.handler(c);
 }
 
 // Solo se sirven index.html, assets/ y js/. data/, server/ y agent/ nunca son accesibles por HTTP.

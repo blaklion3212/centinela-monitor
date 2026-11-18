@@ -12,7 +12,7 @@ Panel modular en HTML/CSS/JS puro (sin dependencias) + un servidor Node opcional
 Requisitos del modo real: **Node 18+**. Windows y Linux (en Linux instala `traceroute` si falta). `PORT=9000 node server/server.js` cambia el puerto; `HOST=0.0.0.0` lo abre a la red.
 
 ## Acceso: usuarios y roles
-El modo real pide **usuario y contraseña**. La primera vez crea el administrador **`administrador`** (variable `CENTINELA_ADMIN_USER`). Su contraseña inicial **no es fija**: si defines `CENTINELA_ADMIN_PASSWORD` (mínimo 8 caracteres) se usa esa; si no, el servidor genera una aleatoria y la muestra **una sola vez** en el log de arranque (`docker logs centinela` o `podman logs centinela`; si lo ejecutas con `node`, en la consola). Ambas variables solo se leen cuando aún no existe `data/users.json`. **Si la contraseña es la aleatoria (o una de menos de 8 caracteres), el primer acceso obliga a cambiarla.** La sección **Usuarios** (solo administradores) da de alta, edita, deshabilita y elimina usuarios con tres roles: *Administrador* (todo), *Operador* (edita objetivos, organizaciones, ajustes y ventanas) y *Lector* (solo consulta); al crear un usuario o restablecer su contraseña puedes obligarlo a cambiarla al entrar. Contraseñas cifradas con scrypt, sesión de 12 h, bloqueo de 60 s tras 5 intentos fallidos, siempre queda al menos un administrador. `CENTINELA_AUTH=off` desactiva el login (solo entornos aislados). Si pierdes todas las contraseñas de administrador: detén el servidor, borra `data/users.json` y arranca de nuevo (se genera una contraseña nueva).
+El modo real pide **usuario y contraseña**. La primera vez crea el administrador **`administrador`** (variable `CENTINELA_ADMIN_USER`). Su contraseña inicial **no es fija**: si defines `CENTINELA_ADMIN_PASSWORD` (mínimo 8 caracteres) se usa esa; si no, el servidor genera una aleatoria y la muestra **una sola vez** en el log de arranque (`docker logs centinela` o `podman logs centinela`; si lo ejecutas con `node`, en la consola). Ambas variables solo se leen cuando aún no existe `data/users.json`. **Si la contraseña es la aleatoria (o una de menos de 8 caracteres), el primer acceso obliga a cambiarla.** La sección **Usuarios** (solo administradores) da de alta, edita, deshabilita y elimina usuarios con tres roles: *Administrador* (todo), *Operador* (edita objetivos, organizaciones, ajustes y ventanas) y *Lector* (solo consulta); al crear un usuario o restablecer su contraseña puedes obligarlo a cambiarla al entrar. Contraseñas cifradas con scrypt, sesión de 12 h, bloqueo de 60 s tras 5 intentos fallidos (el intento se cuenta antes de verificar la contraseña; mayúsculas y espacios del usuario comparten contador), siempre queda al menos un administrador. `CENTINELA_AUTH=off` desactiva el login (solo entornos aislados). Si pierdes todas las contraseñas de administrador: detén el servidor, borra `data/users.json` y arranca de nuevo (se genera una contraseña nueva).
 
 ## Contenedor (Docker / Podman)
 ```
@@ -52,6 +52,21 @@ Vista **Objetivos** → *Agregar objetivo*: nombre del servicio, tipo (IP/host o
 ## Servidores remotos (CPU, RAM, disco, servicios)
 Copia `agent/` al servidor y define el secreto en la variable `CENTINELA_AGENT_TOKEN` (así no queda visible en `ps`) y ejecuta `CENTINELA_AGENT_TOKEN=SECRETO node agent.js --port 9100 --host IP_DE_ESCUCHA`, donde `--host` es la IP por la que te alcanza el panel. En el objetivo activa *Salud del servidor* con el mismo puerto y token. Abre ese puerto solo a la IP del panel.
 
+**TLS opcional (recomendado fuera de una red de gestión aislada).** Genera un certificado autofirmado y arranca el agente con `--tls-cert` y `--tls-key` (o `CENTINELA_AGENT_TLS_CERT` y `CENTINELA_AGENT_TLS_KEY`):
+```
+openssl req -x509 -newkey rsa:2048 -nodes -keyout agent.key -out agent.crt -days 825 -subj "/CN=centinela-agent"
+CENTINELA_AGENT_TOKEN=SECRETO node agent.js --port 9100 --host IP_DE_ESCUCHA --tls-cert agent.crt --tls-key agent.key
+```
+Al arrancar el agente imprime la **huella SHA-256** del certificado. En el objetivo marca *Conexión cifrada (TLS)* y pega esa huella: es **obligatoria** y el token solo se envía si el certificado presentado la tiene. Si cambian la dirección, el puerto o la huella, o se desactiva TLS, el token guardado se descarta y hay que volver a escribirlo. Plazo máximo de la consulta al agente: 10 s. Detalles en [Despliegue seguro](docs/despliegue-seguro.md) y en el manual (sección 11.4).
+
+## Variables de entorno nuevas en la 2.1.0
+| Variable | Qué hace |
+|---|---|
+| `CENTINELA_TRUST_PROXY` | Lista de IP (sin CIDR) de proxies inversos de confianza; solo de ellos se lee `X-Forwarded-For` (se usa la entrada válida más a la derecha que no sea de confianza). El proxy debe **añadir** la IP al final (nginx: `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`), conservar `Host` y ser la única vía de acceso al puerto. Vacía: la cabecera se ignora. |
+| `CENTINELA_AGENT_TLS_CERT` / `CENTINELA_AGENT_TLS_KEY` | Certificado y clave PEM del agente (equivalen a `--tls-cert` / `--tls-key`). |
+
+Además: `POST /api/targets/:id/check` responde 409 si ya hay una verificación en curso, 429 si pasaron menos de 5 s en ese objetivo y 429 con 3 simultáneas o 30 por minuto por usuario (con `Retry-After`); las verificaciones colgadas se liberan como máximo a 2 × `CENTINELA_CHECK_TIMEOUT_MS` y reducen la capacidad mientras tanto. En Podman sin root no uses `podman restart` (deja el contenedor detenido): usa `podman-compose -p <proyecto> restart` o `podman stop` + `podman start` (ver la guía de despliegue).
+
 ## Ventanas
 Arrastra el título para mover, el borde/esquina para redimensionar, ↗ para ampliar, ✕ para quitar. *Agregar ventana* abre la galería (puedes repetir un tipo con distinto objetivo). *Disposición bloqueada* evita cambios accidentales. Se guarda sola.
 
@@ -59,7 +74,7 @@ Arrastra el título para mover, el borde/esquina para redimensionar, ↗ para am
 Crea `js/widgets/mi-widget.js` con `NOC.widgets.register({ type, title, icon, desc, render(ctx) {...} })` y añade el `<script>` en `index.html`.
 
 ## Pruebas
-`npm test`
+`npm test` (334 pruebas, sin dependencias). La integración continua (GitHub Actions, `.github/workflows/pruebas.yml`) ejecuta la suite con Node 18, 20, 22 y 24 y construye la imagen del contenedor en cada push y pull request a `main`.
 
 ## Documentación
 - [Bitácora del proyecto](docs/BITACORA.md)

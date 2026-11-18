@@ -6,15 +6,21 @@
  *
  * Instalación en un servidor remoto: copia esta carpeta (agent.js + sysmetrics.js) y ejecuta
  *     CENTINELA_AGENT_TOKEN=UN_SECRETO_LARGO node agent.js --port 9100 --host 10.0.0.5
- * Uso: node agent.js [--port 9100] [--host IP_DE_ESCUCHA] [--token SECRETO]
+ * Uso: node agent.js [--port 9100] [--host IP_DE_ESCUCHA] [--token SECRETO] [--tls-cert RUTA --tls-key RUTA]
  *   --host   interfaz donde escuchar (recomendado: la IP por la que te alcanza el dashboard; por defecto 0.0.0.0).
  *   --token  secreto compartido; es preferible la variable CENTINELA_AGENT_TOKEN, porque --token se ve en `ps`.
+ *   --tls-cert / --tls-key  certificado y clave PEM para escuchar por HTTPS (o CENTINELA_AGENT_TLS_CERT /
+ *            CENTINELA_AGENT_TLS_KEY). Al arrancar imprime la huella SHA-256 para fijarla en el dashboard.
+ *            Certificado autofirmado (una línea):
+ *            openssl req -x509 -newkey rsa:2048 -nodes -keyout agent.key -out agent.crt -days 825 -subj "/CN=centinela-agent"
  * En el dashboard, en el objetivo de ese servidor, activa "Agente" con el mismo puerto y token.
  *
  * Seguridad: si escucha en una interfaz que no sea 127.0.0.1, exige token.
  * Limita el acceso al puerto con el firewall a la IP del dashboard.
  */
 var http = require('http');
+var https = require('https');
+var fs = require('fs');
 var crypto = require('crypto');
 var metrics = require('./sysmetrics');
 
@@ -28,11 +34,33 @@ var HOST_GIVEN = process.argv.indexOf('--host') > -1 || !!process.env.CENTINELA_
 var HOST = arg('host', process.env.CENTINELA_AGENT_HOST || '0.0.0.0');
 // La variable de entorno tiene prioridad: no queda visible en la lista de procesos.
 var TOKEN = process.env.CENTINELA_AGENT_TOKEN || arg('token', '');
+var TLS_CERT = arg('tls-cert', process.env.CENTINELA_AGENT_TLS_CERT || '');
+var TLS_KEY = arg('tls-key', process.env.CENTINELA_AGENT_TLS_KEY || '');
 var LOOPBACK = /^(127\.|::1$|localhost$)/.test(HOST);
 
 if (!TOKEN && !LOOPBACK) {
   console.error('Por seguridad, el agente exige --token (o CENTINELA_AGENT_TOKEN) cuando escucha fuera de 127.0.0.1.');
   process.exit(1);
+}
+
+// TLS opcional: exige cert y clave a la vez y calcula la huella SHA-256 del certificado.
+var tlsOptions = null, tlsFingerprint = '';
+if (TLS_CERT || TLS_KEY) {
+  if (!TLS_CERT || !TLS_KEY) {
+    console.error('Para usar TLS indica --tls-cert y --tls-key (o CENTINELA_AGENT_TLS_CERT y CENTINELA_AGENT_TLS_KEY) juntos.');
+    process.exit(1);
+  }
+  try {
+    var certPem = fs.readFileSync(TLS_CERT);
+    var keyPem = fs.readFileSync(TLS_KEY);
+    tlsOptions = { cert: certPem, key: keyPem };
+    var x509 = new crypto.X509Certificate(certPem);
+    tlsFingerprint = x509.fingerprint256; // ya viene como 'AA:BB:...'
+    https.createServer(tlsOptions); // valida que cert y clave sean coherentes
+  } catch (e) {
+    console.error('No se pudo cargar el certificado o la clave TLS (' + TLS_CERT + ', ' + TLS_KEY + '): ' + (e && e.message || e));
+    process.exit(1);
+  }
 }
 
 // Límite de fallos de token: 10 por IP y por minuto; superado, responde 429.
@@ -95,7 +123,7 @@ function handle(req, res) {
   send(res, 404, { error: 'no encontrado' });
 }
 
-var server = http.createServer(function (req, res) {
+var server = (tlsOptions ? https.createServer.bind(https, tlsOptions) : http.createServer)(function (req, res) {
   // Errores del socket de la petición o de la respuesta (cliente que corta): no deben tumbar el agente.
   req.on('error', function () {});
   res.on('error', function () {});
@@ -108,7 +136,9 @@ server.on('clientError', function (err, socket) {
   try { if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n'); else socket.destroy(); } catch (e) { /* sin acción */ }
 });
 server.listen(PORT, HOST, function () {
-  console.log('Agente Centinela escuchando en http://' + HOST + ':' + PORT + '  (token ' + (TOKEN ? 'activo' : 'desactivado') + ')');
+  console.log('Agente Centinela escuchando en ' + (tlsOptions ? 'https' : 'http') + '://' + HOST + ':' + PORT + '  (token ' + (TOKEN ? 'activo' : 'desactivado') + ')');
+  if (tlsOptions) console.log('Huella SHA-256 del certificado (cópiala al dashboard): ' + tlsFingerprint);
+  else if (TOKEN) console.warn('Aviso: sin TLS el token viaja en claro; usa --tls-cert y --tls-key.');
   if (!HOST_GIVEN) console.warn('Aviso: escuchando en todas las interfaces (0.0.0.0). Se recomienda indicar --host con la IP por la que te alcanza el dashboard.');
   if (process.argv.indexOf('--token') > -1 && !process.env.CENTINELA_AGENT_TOKEN) console.warn('Aviso: --token es visible en la lista de procesos; usa la variable CENTINELA_AGENT_TOKEN.');
 });

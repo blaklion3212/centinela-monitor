@@ -252,14 +252,21 @@ test('R9: PUT de un objetivo que se borra mientras llega el cuerpo => 404 (no 50
   assert.strictEqual(c.status, 201, c.text);
   var id = c.json.target.id;
   var cuerpo = JSON.stringify({ name: 'renombrado', kind: 'host', address: '10.0.0.8', enabled: false, checks: { ping: false } });
+  // Expect: 100-continue da la señal observable: el servidor responde "100 Continue" en cuanto despacha la petición y,
+  // sin ninguna espera de E/S intermedia, queda leyendo el cuerpo. Al verla, el DELETE llega siempre después.
   var respuesta = await srv.rawHttp(h.port,
     'PUT /api/targets/' + id + ' HTTP/1.1\r\nHost: 127.0.0.1:' + h.port + '\r\nCookie: ' + adm + '\r\nContent-Type: application/json\r\n' +
-    'Content-Length: ' + Buffer.byteLength(cuerpo) + '\r\nConnection: close\r\n\r\n',
+    'Expect: 100-continue\r\nContent-Length: ' + Buffer.byteLength(cuerpo) + '\r\nConnection: close\r\n\r\n',
     { onOpen: function (sock) {
-      // Cabeceras enviadas; el cuerpo se retiene hasta que el objetivo se borre por otra conexión.
-      // Margen mínimo para que el servidor procese las cabeceras: no hay señal observable de "esperando cuerpo".
-      pausa(300).then(function () { return h.request('DELETE', '/api/targets/' + id, { cookie: adm, headers: { 'Content-Type': 'application/json' } }); })
-        .then(function (d) { assert.strictEqual(d.status, 200, d.text); sock.write(cuerpo); }); // el DELETE ya respondió: el borrado es efectivo
+      var visto = '', lanzado = false;
+      // Cabeceras enviadas; el cuerpo se retiene hasta ver el 100 Continue y que el objetivo se borre por otra conexión.
+      sock.on('data', function (d) {
+        visto += d;
+        if (lanzado || visto.indexOf('100 Continue') < 0) return;
+        lanzado = true;
+        h.request('DELETE', '/api/targets/' + id, { cookie: adm, headers: { 'Content-Type': 'application/json' } })
+          .then(function (d2) { assert.strictEqual(d2.status, 200, d2.text); sock.write(cuerpo); }); // el DELETE ya respondió: el borrado es efectivo
+      });
     } });
   assert.strictEqual(respuesta.status, 404, respuesta.text);
   assert.ok(h.log().indexOf('[api]') < 0, 'no debe haber errores internos en el log:\n' + h.log());
@@ -692,4 +699,49 @@ test('R9 QA-9: PUT /api/users/:id con disabled:"false" => 400; con disabled:fals
   var bien = await h.request('PUT', '/api/users/' + u.id, { cookie: adm, body: { disabled: false } });
   assert.strictEqual(bien.status, 200, bien.text);
   assert.strictEqual(bien.json.user.disabled, false);
+});
+
+/* ---------- Fase 3 TLS: el token del agente queda atado a la huella (también vía importación PUT /api/targets) ---------- */
+
+test('Fase 3 TLS: importar (PUT /api/targets) conserva el token si la huella solo cambia de mayúsculas o ":" y lo descarta si cambia o se quita', async function () {
+  var h = await arrancarAdmin();
+  var r = await entrar(h, ADMIN, ADMIN_PASS);
+  var cookie = r.cookie;
+  var HUELLA = Array(32).fill('AB').join(':'), OTRA = Array(32).fill('CD').join(':');
+  function cuerpo(id, agente) {
+    return { id: id, name: 'agente', kind: 'host', address: '192.0.2.10', enabled: false,
+             checks: { ping: false, agent: Object.assign({ enabled: true, port: 9100, services: [] }, agente) } };
+  }
+  async function crear() {
+    var c = await h.request('POST', '/api/targets', { cookie: cookie, body: cuerpo(undefined, { token: 'SECRETO-TLS', tls: true, fingerprint: HUELLA }) });
+    assert.strictEqual(c.status, 201, c.text);
+    assert.strictEqual(c.json.target.checks.agent.hasToken, true);
+    return c.json.target.id;
+  }
+  async function importar(id, agente) {
+    return h.request('PUT', '/api/targets', { cookie: cookie, body: { targets: [cuerpo(id, agente)] } });
+  }
+  // Solo mayúsculas/minúsculas y separadores: el token se conserva.
+  var id1 = await crear();
+  var a = await importar(id1, { tls: true, fingerprint: HUELLA.replace(/:/g, '').toLowerCase() });
+  assert.strictEqual(a.status, 200, a.text);
+  assert.strictEqual(a.json.targets[0].checks.agent.hasToken, true, 'misma huella normalizada => se hereda');
+  assert.strictEqual(a.json.targets[0].checks.agent.fingerprint, HUELLA);
+  assert.ok(a.text.indexOf('SECRETO-TLS') < 0, 'el token nunca sale en la respuesta');
+  // Huella distinta: el token se descarta.
+  var b = await importar(id1, { tls: true, fingerprint: OTRA });
+  assert.strictEqual(b.status, 200, b.text);
+  assert.strictEqual(b.json.targets[0].checks.agent.hasToken, false, 'huella distinta => sin token');
+  // Huella quitada con TLS: la importación se rechaza (huella obligatoria) y no toca lo guardado.
+  var id2 = (await importar(id1, { tls: true, fingerprint: HUELLA, token: 'SECRETO-TLS' })).json.targets[0].id;
+  var c = await importar(id2, { tls: true, fingerprint: '' });
+  assert.strictEqual(c.status, 400, c.text);
+  assert.match(JSON.stringify(c.json.errors), /huella SHA-256 del certificado del agente es obligatoria/);
+  var lista = await h.request('GET', '/api/targets', { cookie: cookie });
+  assert.strictEqual(lista.json.targets[0].checks.agent.hasToken, true, 'la importación rechazada no modificó nada');
+  // TLS apagado: la huella guardada queda vacía y el token no se hereda.
+  var d = await importar(id2, { tls: false, fingerprint: HUELLA });
+  assert.strictEqual(d.status, 200, d.text);
+  assert.strictEqual(d.json.targets[0].checks.agent.fingerprint, '');
+  assert.strictEqual(d.json.targets[0].checks.agent.hasToken, false, 'bajar de TLS descarta el token');
 });

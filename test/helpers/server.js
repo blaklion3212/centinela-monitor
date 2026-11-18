@@ -37,6 +37,20 @@ function freePort() {
  * Las variables CENTINELA_ADMIN_* del entorno del proceso de prueba no se heredan salvo que se pasen en opts.env.
  */
 async function startServer(opts) {
+  // freePort() suelta el puerto antes de que el hijo lo enlace: otro proceso de la suite puede quedárselo (EADDRINUSE).
+  // Se reintenta hasta 3 veces; cada intento fallido ya llamó a handle.stop() (borra solo el directorio propio, nunca opts.dir).
+  var ultimo;
+  for (var intento = 1; intento <= 3; intento++) {
+    try { return await arrancarUnaVez(opts); }
+    catch (e) {
+      ultimo = e;
+      if (!/EADDRINUSE/.test(String(e && e.message))) throw e;
+    }
+  }
+  throw ultimo;
+}
+
+async function arrancarUnaVez(opts) {
   opts = opts || {};
   var dir = opts.dir || tmp.mkTmp('centinela-api-');
   var propio = !opts.dir;
@@ -127,8 +141,10 @@ function rawHttp(port, text, opts) {
     s.on('error', function (e) { clearTimeout(t); reject(e); });
     s.on('close', function () {
       clearTimeout(t);
-      var i = datos.indexOf('\r\n\r\n'), m = /^HTTP\/1\.[01] (\d{3})/.exec(datos);
-      resolve({ status: m ? Number(m[1]) : 0, head: i < 0 ? datos : datos.slice(0, i), body: i < 0 ? '' : datos.slice(i + 4), text: datos });
+      // Se descartan las respuestas informativas previas (1xx, p. ej. "100 Continue" tras Expect: 100-continue).
+      var util = datos.replace(/^(?:HTTP\/1\.[01] 1\d\d[^\r\n]*\r\n(?:[^\r\n]+\r\n)*\r\n)+/, '');
+      var i = util.indexOf('\r\n\r\n'), m = /^HTTP\/1\.[01] (\d{3})/.exec(util);
+      resolve({ status: m ? Number(m[1]) : 0, head: i < 0 ? util : util.slice(0, i), body: i < 0 ? '' : util.slice(i + 4), text: datos });
     });
     if (opts.onOpen) opts.onOpen(s);
   });
@@ -136,12 +152,12 @@ function rawHttp(port, text, opts) {
 
 /*
  * Abre /api/stream (SSE). Resuelve con { status, closed(), whenClosed(ms), close() } al recibir las cabeceras.
- * o.cookie, o.localAddress. Si el estado no es 200 el cuerpo ya está leído en .text/.json.
+ * o.cookie, o.localAddress, o.headers (cabeceras extra). Si el estado no es 200 el cuerpo ya está leído en .text/.json.
  */
 function openStream(port, o) {
   o = o || {};
   return new Promise(function (resolve, reject) {
-    var headers = { Accept: 'text/event-stream' };
+    var headers = Object.assign({ Accept: 'text/event-stream' }, o.headers || {});
     if (o.cookie) headers.Cookie = o.cookie;
     var req = http.request({ host: '127.0.0.1', port: port, method: 'GET', path: '/api/stream', headers: headers, agent: false,
                              localAddress: o.localAddress }, function (res) {
