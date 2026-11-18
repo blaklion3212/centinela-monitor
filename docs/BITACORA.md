@@ -596,3 +596,12 @@ Resultado de las comprobaciones:
   - Documentación y PDF al día.
   - Sin secretos.
 - **Backlog restante:** ninguno técnico. Solo queda la primera ejecución real de la CI, que llegará con el push a GitHub.
+
+**Publicación en GitHub ✅**
+- Repositorio **privado** https://github.com/blaklion3212/centinela-monitor, con rama `main` y etiquetas v2.0.0, v2.1.0 y v2.2.0.
+- Revisión previa al push: sin secretos ni claves en el historial, sin el correo personal (los commits usan el noreply de GitHub) y sin datos de `data/`.
+- **Primera ejecución de la CI** (run 44407409893): todo en verde.
+  - Node 18, 20, 22 y 24: 399 pruebas pasadas, 0 fallidas, 0 omitidas en cada versión.
+  - La construcción de la imagen Docker también pasó.
+
+**Cómo retomar:** `git clone` del repositorio privado y lectura de esta bitácora. Las versiones se publican con commit, etiqueta y `git push origin main --follow-tags`, siempre con aprobación del usuario.
