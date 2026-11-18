@@ -379,7 +379,7 @@ Resultado de las comprobaciones:
 - Manual PDF regenerado: `docs/Centinela-Manual-de-usuario.pdf`, versión 2.0.0, 65 páginas. El original de 56 páginas está en el respaldo.
 - `.gitignore`: excluye `data/*` (salvo `data/README.md`), `.env`, `node_modules`, logs y temporales.
 - Repositorio iniciado (`git init -b main`) con todo preparado.
-- **Pendiente:** commit y etiqueta, cuando el usuario configure `user.name` y `user.email`.
+- **Commit `37f1ffe` (`chore(release): 2.0.0`) y etiqueta anotada `v2.0.0` creados en local.** Autor configurado solo en este repositorio: `blaklion3212`, con el correo noreply de GitHub. Sin remoto.
 
 **Backlog para la siguiente fase**
 - **Seguridad y robustez:**
