@@ -9,3 +9,6 @@ node_modules/
 *.log
 *.zip
 *.tmp
+# Caché de Python
+__pycache__/
+*.pyc
