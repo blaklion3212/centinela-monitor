@@ -516,7 +516,7 @@ function hTargetRemove(c) {
  * Campos:
  *   - access: 'public' (sin sesión) | 'session' (cualquier usuario con sesión, incluso lectores) | 'admin' |
  *             'standard' (los lectores solo pueden hacer lecturas y los diagnósticos de readOnlyAllowed).
- *   - mustChange: con la contraseña por defecto sin cambiar, la ruta sigue permitida.
+ *   - mustChange: con la contraseña temporal sin cambiar, la ruta sigue permitida.
  *   - pre: comprobación previa al manejador; devuelve true si ya respondió.
  * Rutas no listadas: 404 'Ruta no encontrada', tras la sesión y el control de lectores. Patrón listado con otro método: 405.
  * HEAD se trata como GET (sin cuerpo; lo descarta Node). Excepción: `noHead: true` (/api/stream), porque un HEAD abriría

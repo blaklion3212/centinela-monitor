@@ -22,7 +22,7 @@
           var err = new Error((j && (j.error || (j.errors && j.errors[0]))) || HTTP_TEXT[r.status] || ('Error HTTP ' + r.status));
           err.status = r.status;
           err.errors = (j && j.errors) || [err.message];
-          // 403 con mustChange: hay que cambiar la contraseña por defecto antes de seguir.
+          // 403 con mustChange: hay que cambiar la contraseña temporal antes de seguir.
           if (r.status === 403 && j && j.mustChange) { err.mustChange = true; if (NOC.auth) NOC.auth.requireChange(); }
           throw err;
         }

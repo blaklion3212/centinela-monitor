@@ -66,13 +66,13 @@
       '<button type="button" class="icon-btn" data-change-pw title="Cambiar contraseña" aria-label="Cambiar contraseña">' + ui.icon('key') + '</button>' +
       '<button type="button" class="icon-btn" data-logout title="Cerrar sesión" aria-label="Cerrar sesión">' + ui.icon('logout') + '</button>';
   }
-  // Modal de cambio de contraseña. Con opts.forced (contraseña por defecto) no se puede cancelar: solo cambiarla o cerrar sesión.
+  // Modal de cambio de contraseña. Con opts.forced (contraseña temporal: inicial o asignada por un administrador) no se puede cancelar: solo cambiarla o cerrar sesión.
   // Devuelve una promesa que resuelve cuando la contraseña se cambió.
   function changePassword(opts) {
     var forced = !!(opts && opts.forced), done;
     var finished = new Promise(function (resolve) { done = resolve; });
     var m = ui.modal({ title: forced ? 'Debes cambiar tu contraseña' : 'Cambiar contraseña', persistent: forced, body:
-      (forced ? '<p class="muted" style="margin:0 0 10px">Tu cuenta usa la contraseña por defecto. Por seguridad debes definir una nueva antes de continuar.</p>' : '') +
+      (forced ? '<p class="muted" style="margin:0 0 10px">Tu contraseña es temporal (la inicial o una asignada por un administrador). Por seguridad debes definir una nueva antes de continuar.</p>' : '') +
       '<form id="pf" novalidate autocomplete="off"><div data-errors></div>' +
       '<div class="field"><label for="pw-cur">Contraseña actual</label><input id="pw-cur" type="password" autocomplete="current-password" maxlength="200"></div>' +
       '<div class="field"><label for="pw-new">Contraseña nueva</label><input id="pw-new" type="password" autocomplete="new-password" maxlength="200"><span class="hint">Mínimo 8 caracteres. Se cerrarán tus otras sesiones abiertas.</span></div>' +

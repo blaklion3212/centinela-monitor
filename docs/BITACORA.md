@@ -621,3 +621,16 @@ Resultado de las comprobaciones:
 **Backlog**
 - Capturas desactualizadas en las Figuras de Objetivos y del formulario (p15-fig-007 y p16-fig-008): les falta la barra de organizaciones, la casilla "Identificarse como un navegador" y los campos TLS. Por ahora llevan una nota en el pie.
 - Texto de la interfaz: el aviso ámbar dice "Estás usando la contraseña por defecto…", pero ya no existe una contraseña fija. Conviene cambiarlo por "contraseña inicial o temporal".
+
+---
+
+## 2026-11-18 · Aviso de contraseña y capturas de Objetivos
+
+**Petición del usuario:** corregir el aviso de contraseña y rehacer las capturas desactualizadas. El usuario aprobó subir el cambio y dejarlo en el CHANGELOG bajo `[Sin publicar]`, sin versión nueva.
+
+**Hecho**
+- **Aviso:** `index.html` (aviso ámbar) y `js/app.js` (ventana obligatoria) ahora hablan de "contraseña temporal (la inicial o asignada por un administrador)" en lugar de "contraseña por defecto". Se ajustaron los comentarios de `auth.js`, `source-live.js` y `server.js`, y los manuales.
+- **Capturas:** `implementador` rehízo `p15-fig-007` (Objetivos con barra de organizaciones), `p16-fig-008` (formulario con la casilla de navegador) y `p16-fig-009` (agente con TLS y huella), con Firefox headless por WebDriver, datos ficticios y un `CENTINELA_DATA` temporal.
+  - Los pies de figura se actualizaron en el manual y en la guía. La guía ahora incluye también `p16-fig-009`.
+- PDF regenerados: manual de 73 páginas y guía de 45 páginas.
+- Pruebas: 399/399. `data/` intacto.

@@ -16,7 +16,7 @@
         if (!r.ok) {
           var err = new Error((j && (j.error || (j.errors && j.errors[0]))) || HTTP_TEXT[r.status] || ('Error HTTP ' + r.status));
           err.status = r.status; err.errors = (j && j.errors) || [err.message];
-          // 403 con mustChange: contraseña por defecto, hay que cambiarla (excepto en las propias rutas de sesión).
+          // 403 con mustChange: contraseña temporal, hay que cambiarla (excepto en las propias rutas de sesión).
           if (r.status === 403 && j && j.mustChange) {
             err.mustChange = true;
             if (!/^\/api\/auth\/(password|logout|login)$/.test(url)) A.requireChange();
@@ -58,7 +58,7 @@
       });
     },
 
-    // Modal NO descartable para cambiar la contraseña por defecto. Resuelve al lograrlo; comparte una sola ventana si se pide varias veces.
+    // Modal NO descartable para cambiar la contraseña temporal. Resuelve al lograrlo; comparte una sola ventana si se pide varias veces.
     requireChange: function () {
       if (pwPending) return pwPending;
       pwPending = NOC.app.changePassword({ forced: true }).then(function () {

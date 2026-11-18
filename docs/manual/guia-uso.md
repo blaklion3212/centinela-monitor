@@ -49,7 +49,7 @@ El nombre de usuario no distingue mayúsculas de minúsculas; la contraseña sí
 
 Si tu cuenta es nueva, o un administrador te asignó la contraseña, el panel puede exigirte cambiarla antes de seguir. Lo notarás por dos señales:
 
-- Un aviso ámbar arriba que dice "Estás usando la contraseña por defecto. Cámbiala ahora…".
+- Un aviso ámbar arriba que dice "Tu contraseña es temporal. Es la inicial o la asignó un administrador: cámbiala ahora…".
 - Una ventana llamada **Debes cambiar tu contraseña** que no se puede cerrar. Solo puedes cambiarla o pulsar **Cerrar sesión**.
 
 Para cambiarla:
@@ -372,7 +372,7 @@ La sección **Objetivos** es donde se administra todo lo que se monitorea. Muest
 
 ## 5.1 La tabla de objetivos
 
-![Sección Objetivos (captura en modo demostración, anterior a la barra de organizaciones: en tu panel esta barra aparece bajo la barra superior).](img/p15-fig-007.jpg)
+![Sección Objetivos: barra de organizaciones, buscador, Importar, Exportar, Agregar objetivo y la tabla con estado, nombre, tipo, dirección, etiquetas, qué se mide, intervalo y acciones.](img/p15-fig-007.jpg)
 
 | Columna | Contenido |
 |---|---|
@@ -398,7 +398,9 @@ Arriba, el cuadro **Buscar** filtra mientras escribes por nombre, dirección, gr
 
 Para **editar**, pulsa el lápiz de la fila; el botón dice **Guardar cambios**. Si hay un error, el formulario muestra una lista en rojo arriba.
 
-![Formulario de objetivo (ejemplo de una URL). Esta captura es anterior a la casilla "Identificarse como un navegador" y a los campos de conexión cifrada (TLS) y huella; se describen en las tablas.](img/p16-fig-008.jpg)
+![Formulario de objetivo (ejemplo de una URL), parte superior: datos generales, qué medir y la casilla "Identificarse como un navegador".](img/p16-fig-008.jpg)
+
+![El mismo formulario desplazado hacia abajo: verificaciones HTTP/SSL y salud del servidor (agente) con conexión cifrada (TLS) y la huella SHA-256 del certificado.](img/p16-fig-009.jpg)
 
 ### Datos generales
 

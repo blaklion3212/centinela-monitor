@@ -232,7 +232,7 @@ Las ventanas con gráfica tienen los botones 30, 120 y Todo (hasta 360 puntos): 
 
 Aquí se administra todo lo que se monitorea, separado del Panel. Se puede agregar, editar, pausar, eliminar, etiquetar, buscar, importar y exportar. Se permiten hasta 500 objetivos por organización; la lista mostrada es la de la organización activa (ver capítulo 7).
 
-![Figura 7. Sección Objetivos: nombre del servicio, tipo, dirección, etiquetas, qué se mide, intervalo y acciones.](img/p15-fig-007.jpg)
+![Figura 7. Sección Objetivos de la organización activa: estado, nombre del servicio, tipo, dirección, etiquetas, qué se mide, intervalo, activo y acciones.](img/p15-fig-007.jpg)
 
 ## 6.1 La tabla de objetivos
 
@@ -252,9 +252,9 @@ El cuadro Buscar filtra por nombre, dirección, grupo o etiqueta mientras escrib
 
 ## 6.2 Formulario “Agregar objetivo” / “Editar objetivo”
 
-![Figura 8. Formulario de objetivo (ejemplo de una URL). Izquierda: datos generales y puertos.](img/p16-fig-008.jpg)
+![Figura 8. Formulario de objetivo (ejemplo de una URL). Izquierda: datos generales, puertos y la casilla “Identificarse como un navegador”.](img/p16-fig-008.jpg)
 
-![Figura 8 (continuación). Derecha: el mismo formulario desplazado hacia abajo, con verificaciones HTTP/SSL y salud del servidor (agente).](img/p16-fig-009.jpg)
+![Figura 8 (continuación). Derecha: el mismo formulario desplazado hacia abajo, con verificaciones HTTP/SSL y salud del servidor (agente) con conexión cifrada (TLS) y huella.](img/p16-fig-009.jpg)
 
 ### Datos generales
 
@@ -469,7 +469,7 @@ Datos en: /ruta/a/data  |  6 objetivos en 1 organización(es)
 
 > **Importante:** anota la contraseña antes de cerrar la terminal: no se vuelve a mostrar. Se imprime una sola vez aunque el arranque falle (por ejemplo, por puerto ocupado) y, en contenedor, queda en `docker logs` o `podman logs` hasta que se roten los logs: cámbiala de inmediato y, si quieres, rota o limpia el log. Si la pierdes antes de entrar, borra data/users.json y arranca de nuevo (sección 9.6).
 
-Cuando una cuenta está marcada como “debe cambiar la contraseña” (la generada, una débil, o un usuario creado con la casilla “Obligar a cambiar la contraseña al entrar”), el panel muestra un aviso ámbar (“Estás usando la contraseña por defecto. Cámbiala ahora…”) y, al iniciar sesión, una ventana “Debes cambiar tu contraseña” que no se puede cerrar: solo puedes cambiarla o cerrar sesión. Además, el servidor lo impone: mientras no la cambies, toda la API responde 403 con `mustChange`, salvo consultar tu sesión, cambiar la contraseña y cerrar sesión.
+Cuando una cuenta está marcada como “debe cambiar la contraseña” (la generada, una débil, o un usuario creado con la casilla “Obligar a cambiar la contraseña al entrar”), el panel muestra un aviso ámbar (“Tu contraseña es temporal. Es la inicial o la asignó un administrador: cámbiala ahora…”) y, al iniciar sesión, una ventana “Debes cambiar tu contraseña” que no se puede cerrar: solo puedes cambiarla o cerrar sesión. Además, el servidor lo impone: mientras no la cambies, toda la API responde 403 con `mustChange`, salvo consultar tu sesión, cambiar la contraseña y cerrar sesión.
 
 | Variable | Por defecto | Qué hace |
 |---|---|---|
