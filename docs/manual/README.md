@@ -24,6 +24,16 @@ Sin argumentos lee `docs/manual/manual.md` y escribe
 `docs/Centinela-Manual-de-usuario.pdf`. Si falta una imagen, el script
 termina con un error que indica la línea y la ruta buscada.
 
+## Guía de uso
+
+`guia-uso.md` es una guía de uso aparte, para quien usa el panel a diario
+(sin instalación ni API). Usa el mismo contrato de formato y las mismas
+imágenes. Para regenerar su PDF:
+
+```
+python3 docs/manual/generar_manual.py --entrada docs/manual/guia-uso.md --salida docs/Centinela-Guia-de-uso.pdf
+```
+
 ## Cómo editar
 
 1. Edita `docs/manual/manual.md`.

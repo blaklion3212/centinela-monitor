@@ -5,6 +5,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). V
 
 ## [Sin publicar]
 
+### Agregado
+- Guía de uso en PDF (`docs/Centinela-Guia-de-uso.pdf`, 45 páginas) para quien usa el panel. Explica cada función paso a paso: ventanas, objetivos, organizaciones, ajustes, usuarios y roles, tareas frecuentes y mensajes comunes. Su fuente es `docs/manual/guia-uso.md`.
+
+### Corregido
+- El encabezado de las páginas de los PDF muestra el título de cada documento.
+
 ## [2.2.0] - 2026-11-18
 
 ### Agregado

@@ -154,7 +154,7 @@ class Documento(BaseDocTemplate):
         w = pdfmetrics.stringWidth("Centinela", "DV-B", 7.5)
         c.setFont("DV", 7.5)
         c.setFillColor(GRIS)
-        c.drawString(MARGEN_X + w + 4, y, "· Manual de usuario y configuración")
+        c.drawString(MARGEN_X + w + 4, y, "· " + self.meta.get("title", "Manual de usuario y configuración"))
         c.setStrokeColor(BORDE)
         c.setLineWidth(0.6)
         c.line(MARGEN_X, y - 6, PAG_W - MARGEN_X, y - 6)

@@ -605,3 +605,19 @@ Resultado de las comprobaciones:
   - La construcción de la imagen Docker también pasó.
 
 **Cómo retomar:** `git clone` del repositorio privado y lectura de esta bitácora. Las versiones se publican con commit, etiqueta y `git push origin main --follow-tags`, siempre con aprobación del usuario.
+
+---
+
+## 2026-11-18 · Guía de uso en PDF
+
+**Petición del usuario:** un manual en PDF que explique cada funcionalidad. Ya existía el manual completo (73 páginas), así que el usuario eligió una **guía de uso separada** para operadores y lectores. También aprobó subirla a GitHub.
+
+**Hecho**
+- `documentador` redactó `docs/manual/guia-uso.md`: 10 capítulos y 2 anexos, 24 figuras reutilizadas.
+- PDF generado: `docs/Centinela-Guia-de-uso.pdf`, 45 páginas. Se regenera con `python3 docs/manual/generar_manual.py --entrada docs/manual/guia-uso.md --salida docs/Centinela-Guia-de-uso.pdf`.
+- `generar_manual.py`: el encabezado de página usa el `title` de los metadatos, que antes estaba fijo como "Manual de usuario y configuración". Se regeneraron ambos PDF.
+- Al ser un cambio solo de documentación, no se sube la versión; se registra en el CHANGELOG bajo `[Sin publicar]`.
+
+**Backlog**
+- Capturas desactualizadas en las Figuras de Objetivos y del formulario (p15-fig-007 y p16-fig-008): les falta la barra de organizaciones, la casilla "Identificarse como un navegador" y los campos TLS. Por ahora llevan una nota en el pie.
+- Texto de la interfaz: el aviso ámbar dice "Estás usando la contraseña por defecto…", pero ya no existe una contraseña fija. Conviene cambiarlo por "contraseña inicial o temporal".

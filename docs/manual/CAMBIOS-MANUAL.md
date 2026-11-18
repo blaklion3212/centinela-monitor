@@ -83,6 +83,13 @@ Revisión sobre el manual 2.1.0, con la versión `2.2.0` en los metadatos y en l
 
 Los cambios de la fase 4 no alteran figuras ni capturas. La suite pasó a más de 380 pruebas (número final: lo fija el orquestador).
 
+## Guía de uso 2.2.0 (documento nuevo)
+
+Se añade `docs/manual/guia-uso.md`, una guía de uso separada del manual técnico (versión `2.2.0`, 18 de noviembre de 2026), para operadores, lectores y administradores en lo que toca a la interfaz. Se genera aparte como `docs/Centinela-Guia-de-uso.pdf` (ver `README.md`). No modifica `manual.md`. Fuente de verdad: el código de la interfaz (`index.html`, `js/app.js`, `js/views/*`, `js/widgets/*`, `js/services/auth.js`, `js/ui/grid.js`) y el manual.
+
+- Contenido: primeros pasos, conceptos, Panel, catálogo de las 14 ventanas, Objetivos, Organizaciones, Ajustes, Usuarios y roles, recetas, preguntas frecuentes y dos anexos (glosario y matriz de roles). No incluye instalación, contenedor, variables de entorno ni API.
+- Imágenes: reutiliza las de `docs/manual/img/` sin modificarlas. Las capturas `p15-fig-007` (Objetivos) y `p16-fig-008` (formulario) se usan con una nota en el pie porque son anteriores a la barra de organizaciones y a los campos de navegador, TLS y huella. No se usan `p05-fig-001`, `p11-fig-002` (anteriores a la barra de organizaciones), `p16-fig-009` (parte del agente sin TLS) ni `p40-fig-030` (solo muestra el estado vacío de Servicios del sistema). Tampoco se usan `p32-fig-019`, `p34-fig-021` y `p39-fig-029`, porque otras capturas cubren esas ventanas o la guía las describe solo con texto.
+
 ## Secciones sin cambios de contenido
 
 Capítulos 3 (excepto 3.2 y 3.5), 5, 7, 10 (excepto los dos puntos indicados), 15 (excepto 15.10), Anexos A y B y el resto de las secciones 2, 6 y 8 se transcribieron del PDF. Solo hubo adaptaciones de formato: las celdas con una barra vertical se reescribieron con “o”, la nota “Cuidado” del capítulo 11 pasó a `> **Importante:**` (el generador solo admite Nota, Importante y Consejo) y las tablas de clave-valor del catálogo llevan una fila de cabecera (“Aspecto | Detalle”).
