@@ -364,9 +364,12 @@
     st.lastW = st.body.clientWidth; st.lastH = st.body.clientHeight;
     var target = this.resolveTarget(it, d);
     this.syncTargetSelect(it, st, d);
-    var ctx = st.ctx = { id: id, body: st.body, state: st.state, config: it.config || {}, target: target,
-      width: st.lastW, height: st.lastH, grid: this,
-      setConfig: function (patch) { it.config = Object.assign({}, it.config, patch); ctx.config = it.config; this.grid.changed(); } };
+    // Un único ctx por ventana, actualizado en cada render: los manejadores que init() registra lo capturan una sola vez,
+    // así que si se creara uno nuevo por render verían el objetivo de la primera vez (p. ej. el traceroute corría contra
+    // el servicio anterior tras cambiar de objetivo).
+    var ctx = st.ctx || (st.ctx = { id: id, body: st.body, state: st.state, grid: this });
+    ctx.config = it.config || {}; ctx.target = target; ctx.width = st.lastW; ctx.height = st.lastH;
+    ctx.setConfig = function (patch) { it.config = Object.assign({}, it.config, patch); ctx.config = it.config; ctx.grid.changed(); };
     var scrolls = Array.prototype.map.call(st.body.querySelectorAll('[data-keep-scroll]'), function (n) { return n.scrollTop; });
     var bodyScroll = st.body.scrollTop;
     try {

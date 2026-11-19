@@ -10,6 +10,7 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). V
 
 ### Corregido
 - El encabezado de las páginas de los PDF muestra el título de cada documento.
+- **Traceroute:** después de cambiar el servicio de la ventana «Análisis de ruta (traceroute)», «Ejecutar» no mostraba nada hasta recargar la página, porque trazaba el servicio anterior. Ahora traza el servicio elegido. La causa estaba en cómo cada ventana guardaba su contexto, así que la corrección vale para todas.
 - El aviso del panel y la ventana de cambio obligatorio ya no hablan de una «contraseña por defecto», que no existe desde la 2.0.0. Ahora indican que la contraseña es temporal: la inicial o una asignada por un administrador.
 - Manuales: nuevas capturas de la sección Objetivos y de su formulario, con la barra de organizaciones, la casilla «Identificarse como un navegador» y los campos de conexión cifrada (TLS) y huella.
 
