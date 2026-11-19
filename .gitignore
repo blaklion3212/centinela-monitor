@@ -12,3 +12,7 @@ node_modules/
 # Caché de Python
 __pycache__/
 *.pyc
+
+# Configuración local del asistente: no se versiona
+CLAUDE.md
+.claude/
