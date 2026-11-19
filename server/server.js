@@ -17,6 +17,12 @@
  *   - CENTINELA_CONCURRENCY y CENTINELA_CHECK_TIMEOUT_MS: ver server/lib/scheduler.js (las verificaciones colgadas tras el
  *     plazo reducen la capacidad efectiva, sin bloquearla del todo).
  *   - POST /api/targets/:id/check: intervalo mínimo de 5 s por objetivo entre verificaciones manuales (429 + Retry-After).
+ *
+ * Alertas opcionales por Telegram (solo administradores, rutas /api/alerts*; ver docs/requisitos/alertas.md):
+ *   - CENTINELA_TELEGRAM_TOKEN: token del bot. Tiene prioridad sobre el guardado en el panel (data/alerts.json).
+ *     Mejor definirlo en el .env que guardarlo en el panel.
+ *   - CENTINELA_ALERTS_DISABLED: 1 o true bloquea la función entera (no se envía nada, ni pruebas ni búsqueda de chats).
+ *   - POST /api/alerts/test y /api/alerts/chats: una acción en curso por administrador y como mínimo 5 s entre acciones (429 + Retry-After).
  */
 var http = require('http');
 var fs = require('fs');
@@ -30,6 +36,9 @@ var routes = require('./lib/routes');
 var Scheduler = require('./lib/scheduler').Scheduler;
 var tracer = require('./probes/traceroute');
 var authLib = require('./lib/auth');
+var alertsCfg = require('./lib/alerts-config');
+var telegram = require('./lib/channels/telegram');
+var notify = require('./lib/notify');
 var pkg = require('../package.json');
 
 var ROOT = path.join(__dirname, '..');
@@ -55,6 +64,24 @@ if (auth.seeded && auth.seeded.generatedPassword) {
 var LOCAL_USER = { id: 'local', username: 'local', role: 'admin' };
 
 var scheduler = new Scheduler(store);
+
+// Alertas por Telegram: configuración (data/alerts.json), canal de red y motor de avisos.
+var storeMod = require('./lib/store');
+var alertsStore = {
+  load: function () { return alertsCfg.load(storeMod, store.getOrgs().map(function (o) { return o.id; })); },
+  save: function (cfg) { alertsCfg.save(storeMod, cfg); },
+  cfgApi: alertsCfg
+};
+var tgChannel = telegram.create({ apiBase: process.env.CENTINELA_TELEGRAM_API_BASE || undefined, timeoutMs: 10000, maxBodyBytes: 262144 });
+if (tgChannel.baseWarning) console.warn('[alertas] ' + tgChannel.baseWarning);
+else if (tgChannel.apiBase !== 'https://api.telegram.org') console.log('[alertas] Usando base alternativa de la API: ' + new URL(tgChannel.apiBase).origin);
+var notifyConsts = {};
+// Variable interna de pruebas: ventana de agrupación (entero acotado entre 0 y 60000 ms).
+if (/^\d{1,5}$/.test(String(process.env.CENTINELA_ALERTS_GROUP_WINDOW_MS || '').trim())) {
+  notifyConsts.GROUP_WINDOW_MS = Math.min(60000, parseInt(process.env.CENTINELA_ALERTS_GROUP_WINDOW_MS, 10));
+}
+var notifier = notify.create({ store: store, alertsStore: alertsStore, channel: tgChannel, env: process.env,
+  version: pkg.version, consts: notifyConsts, chatsFromUpdates: telegram.chatsFromUpdates });
 var clients = new Map();       // res -> { sid, key, user, ka } (flujos SSE abiertos; el Map conserva el orden de apertura)
 // Topes de flujos SSE: por clave (sid con auth activa; IP con auth off), por usuario (o IP con auth off) y global.
 // Al superar uno de los dos primeros se cierra el flujo MÁS ANTIGUO; solo el global rechaza con 429.
@@ -238,6 +265,7 @@ function orgsPayload() { return { orgs: store.getOrgs(), statuses: scheduler.sta
 function targetsChanged(orgId) {
   scheduler.reschedule();
   pruneManual();
+  notifier.prune();
   broadcast('targets', { org: orgId, targets: publicList(orgId), statuses: scheduler.statuses(), orgs: store.getOrgs() });
 }
 
@@ -360,6 +388,7 @@ function hOrgsRemove(c) {
   var dr = store.removeOrg(c.params.id);
   if (dr.errors) return sendJson(c.res, 400, { errors: dr.errors });
   scheduler.reschedule();
+  notifier.prune();
   broadcast('orgs', orgsPayload());
   return sendJson(c.res, 200, { ok: true });
 }
@@ -509,6 +538,95 @@ function hTargetRemove(c) {
   return sendJson(c.res, 200, { ok: true });
 }
 
+// Alertas por Telegram (solo administradores). Nunca se devuelve ni se registra el token.
+var ALERTS_MIN_MS = 5000;
+var alertsAct = {};            // administrador (o IP con auth off) -> { busy, last }
+function alertsLog(c, msg) { console.log('[alertas] ' + msg + ' por ' + c.me.username); }
+function tokenEnvConflict(c) {
+  if (alertsCfg.tokenInfo(alertsStore.load(), process.env).source !== 'env') return false;
+  sendJson(c.res, 409, { error: 'El token está definido en la variable de entorno CENTINELA_TELEGRAM_TOKEN; quita la variable para gestionarlo desde el panel', code: 'token_from_env' });
+  return true;
+}
+function hAlertsGet(c) {
+  var cfg = alertsStore.load();
+  return sendJson(c.res, 200, Object.assign(alertsCfg.publicView(cfg, process.env), { tokenEnvInvalid: alertsCfg.tokenInfo(cfg, process.env).envInvalid }));
+}
+async function hAlertsPut(c) {
+  var body = await readBody(c.req);
+  var cur = alertsStore.load();
+  var vr = alertsCfg.validateUpdate(body, cur, process.env);
+  if (vr.errors) return sendJson(c.res, 400, { errors: vr.errors });
+  // Se relee justo antes de guardar y se conservan el token y `alerted` actuales.
+  var fresh = alertsStore.load();
+  var next = vr.value;
+  next.token = fresh.token; next.alerted = fresh.alerted;
+  alertsStore.save(next);
+  notifier.reload();
+  if (!!fresh.enabled !== !!next.enabled) alertsLog(c, next.enabled ? 'activadas' : 'desactivadas');
+  // RA-14: todo guardado deja rastro; solo los nombres de los campos cambiados, sin valores.
+  var changed = ['chatId', 'detail', 'failsBeforeAlert', 'notifyRecovery', 'notifyDegraded'].filter(function (k) { return fresh[k] !== next[k]; });
+  alertsLog(c, 'ajustes guardados' + (changed.length ? ' (' + changed.join(', ') + ')' : ' sin cambios'));
+  return sendJson(c.res, 200, alertsCfg.publicView(next, process.env));
+}
+async function hAlertsTokenPut(c) {
+  var body = await readBody(c.req);
+  if (tokenEnvConflict(c)) return;
+  var tk = typeof body.token === 'string' ? body.token.trim() : '';
+  if (!alertsCfg.validateToken(tk)) return sendJson(c.res, 400, { errors: ['Parece incompleto: cópialo entero desde BotFather'] });
+  var cfg = alertsStore.load();
+  cfg.token = tk;
+  alertsStore.save(cfg);
+  notifier.reload();
+  alertsLog(c, 'token guardado desde el panel');
+  var ti = alertsCfg.tokenInfo(cfg, process.env);
+  return sendJson(c.res, 200, { tokenConfigured: ti.source !== 'none', tokenHint: ti.hint, tokenSource: ti.source });
+}
+function hAlertsTokenDelete(c) {
+  if (tokenEnvConflict(c)) return;
+  var cfg = alertsStore.load();
+  cfg.token = '';
+  var wasOn = cfg.enabled;
+  cfg.enabled = false; // sin token no puede seguir activada
+  alertsStore.save(cfg);
+  notifier.reload();
+  alertsLog(c, 'token borrado del panel' + (wasOn ? '; alertas desactivadas' : ''));
+  return sendJson(c.res, 200, { tokenConfigured: false, tokenSource: alertsCfg.tokenInfo(cfg, process.env).source, enabled: !!cfg.enabled });
+}
+function hAlertsStatus(c) {
+  var st = notifier.status(), envInvalid = alertsCfg.tokenInfo(alertsStore.load(), process.env).envInvalid;
+  // RA-21: una variable de token con formato no válido se ignora y se explica en la nota.
+  if (envInvalid && !st.note) st.note = 'La variable no tiene formato de token (CENTINELA_TELEGRAM_TOKEN): se ignora.';
+  return sendJson(c.res, 200, Object.assign(st, { tokenEnvInvalid: envInvalid, blockedByEnv: alertsCfg.blockedByEnv(process.env) }));
+}
+// Prueba y búsqueda de chats: bloqueo por entorno, una acción a la vez y una cada 5 s por administrador.
+async function alertsAction(c, run) {
+  var body = await readBody(c.req);
+  if (alertsCfg.blockedByEnv(process.env)) {
+    return sendJson(c.res, 409, { error: 'alerts_disabled_by_env', code: 'alerts_disabled_by_env',
+      message: 'Las alertas están bloqueadas por la variable de entorno CENTINELA_ALERTS_DISABLED; quítala y reinicia el servidor para usarlas.' });
+  }
+  var key = AUTH_ON ? c.me.id : ipOf(c.req);
+  var st = alertsAct[key] || (alertsAct[key] = { busy: false, last: 0 });
+  var nowA = Date.now();
+  if (st.busy) return sendJson(c.res, 429, { error: 'Ya hay una acción de alertas en curso; espera a que termine' }, { 'Retry-After': '5' });
+  if (nowA - st.last < ALERTS_MIN_MS) {
+    var aw = Math.max(1, Math.ceil((ALERTS_MIN_MS - (nowA - st.last)) / 1000));
+    return sendJson(c.res, 429, { error: 'Espera unos segundos antes de repetir esta acción' }, { 'Retry-After': String(aw) });
+  }
+  st.busy = true; st.last = nowA;
+  var r;
+  try { r = await run(body); } finally { st.busy = false; st.last = Date.now(); }
+  if (r && r.ok === false) {
+    if (r.code === 'no_token' || r.code === 'no_chat') return sendJson(c.res, 400, { error: r.message, code: r.code });
+    if (r.retryAfterS != null) r = Object.assign({}, r, { retryAfter: r.retryAfterS });
+  }
+  return sendJson(c.res, 200, r);
+}
+function hAlertsTest(c) {
+  return alertsAction(c, function (b) { return notifier.test(typeof b.chatId === 'string' && b.chatId ? b.chatId : undefined); });
+}
+function hAlertsChats(c) { return alertsAction(c, function () { return notifier.findChats(); }); }
+
 /*
  * Tabla de rutas. Gana la PRIMERA que coincide en método y patrón. No hay entradas comodín: si el patrón existe con
  * otro método, la respuesta es 405 con `Allow` (ver api()); las comprobaciones `pre` (organización u objetivo
@@ -516,6 +634,7 @@ function hTargetRemove(c) {
  * Campos:
  *   - access: 'public' (sin sesión) | 'session' (cualquier usuario con sesión, incluso lectores) | 'admin' |
  *             'standard' (los lectores solo pueden hacer lecturas y los diagnósticos de readOnlyAllowed).
+ *   - deniedMsg: mensaje del 403 cuando una ruta 'admin' se pide sin ser administrador (por defecto el de gestión de usuarios).
  *   - mustChange: con la contraseña temporal sin cambiar, la ruta sigue permitida.
  *   - pre: comprobación previa al manejador; devuelve true si ya respondió.
  * Rutas no listadas: 404 'Ruta no encontrada', tras la sesión y el control de lectores. Patrón listado con otro método: 405.
@@ -523,6 +642,7 @@ function hTargetRemove(c) {
  * un flujo SSE registrado y sin lector; ahí HEAD responde 405 con `Allow: GET`.
  */
 var ID_USER = '[A-Za-z0-9_]{1,40}', ID_ORG = '[a-z0-9]{1,32}', ID_TARGET = '[A-Za-z0-9_-]{1,64}';
+var ALERTS_DENIED = 'Solo un administrador puede configurar las alertas';
 var ROUTES = [
   { method: 'GET',    pattern: '/api/health',         access: 'public', handler: hHealth },
   { method: 'POST',   pattern: '/api/auth/login',     access: 'public', handler: hLogin },
@@ -535,6 +655,14 @@ var ROUTES = [
   { method: 'POST',   pattern: '/api/users',          access: 'admin', handler: hUsersCreate },
   { method: 'PUT',    pattern: '/api/users/:id',      params: { id: ID_USER }, access: 'admin', handler: hUsersUpdate },
   { method: 'DELETE', pattern: '/api/users/:id',      params: { id: ID_USER }, access: 'admin', handler: hUsersRemove },
+
+  { method: 'GET',    pattern: '/api/alerts',         access: 'admin', deniedMsg: ALERTS_DENIED, handler: hAlertsGet },
+  { method: 'PUT',    pattern: '/api/alerts',         access: 'admin', deniedMsg: ALERTS_DENIED, handler: hAlertsPut },
+  { method: 'PUT',    pattern: '/api/alerts/token',   access: 'admin', deniedMsg: ALERTS_DENIED, handler: hAlertsTokenPut },
+  { method: 'DELETE', pattern: '/api/alerts/token',   access: 'admin', deniedMsg: ALERTS_DENIED, handler: hAlertsTokenDelete },
+  { method: 'POST',   pattern: '/api/alerts/test',    access: 'admin', deniedMsg: ALERTS_DENIED, handler: hAlertsTest },
+  { method: 'POST',   pattern: '/api/alerts/chats',   access: 'admin', deniedMsg: ALERTS_DENIED, handler: hAlertsChats },
+  { method: 'GET',    pattern: '/api/alerts/status',  access: 'admin', deniedMsg: ALERTS_DENIED, handler: hAlertsStatus },
 
   { method: 'GET',    pattern: '/api/state',          access: 'standard', handler: hState },
   { method: 'GET',    pattern: '/api/orgs',           access: 'standard', handler: hOrgsList },
@@ -588,14 +716,14 @@ async function api(req, res, url) {
   }
 
   // Gestión de usuarios: solo administradores.
-  if (route && route.access === 'admin' && me.role !== 'admin') return sendJson(res, 403, { error: 'Solo un administrador puede gestionar usuarios' });
+  if (route && route.access === 'admin' && me.role !== 'admin') return sendJson(res, 403, { error: route.deniedMsg || 'Solo un administrador puede gestionar usuarios' });
 
   // Ruta existente con un método no declarado: se resuelve aquí para que el 405 llegue DESPUÉS de 401 y 403 (un
   // anónimo nunca averigua qué rutas existen) y se aplique a todos los roles. `known.route` aporta el `access` del patrón.
   var known = route ? null : router.allowed(p);
 
   // Gestión de usuarios: solo administradores (también con un método no declarado).
-  if (known && known.route.access === 'admin' && me.role !== 'admin') return sendJson(res, 403, { error: 'Solo un administrador puede gestionar usuarios' });
+  if (known && known.route.access === 'admin' && me.role !== 'admin') return sendJson(res, 403, { error: known.route.deniedMsg || 'Solo un administrador puede gestionar usuarios' });
 
   // Lectores: solo consulta (y diagnósticos de solo lectura). Rige para rutas desconocidas; en una ruta existente
   // sin ese método manda el 405 (no tiene sentido decir "solo lectura" de algo que nadie puede hacer).
@@ -646,6 +774,7 @@ var server = http.createServer(function (req, res) {
 
 server.listen(PORT, HOST, function () {
   scheduler.start();
+  notifier.start(scheduler);
   console.log('Centinela ' + pkg.version + ' → http://' + (HOST === '0.0.0.0' ? 'localhost' : HOST) + ':' + PORT);
   console.log(AUTH_ON ? 'Acceso: inicio de sesión activado (' + auth.count() + ' usuario(s))' : 'AVISO: CENTINELA_AUTH=off, la API no pide inicio de sesión.');
   if (auth.seeded) {
@@ -653,9 +782,11 @@ server.listen(PORT, HOST, function () {
   }
   console.log('Datos en: ' + store.dir + '  |  ' + store.allTargets().length + ' objetivos en ' + store.getOrgs().length + ' organización(es)');
   if (!AUTH_ON && HOST !== '127.0.0.1' && HOST !== 'localhost') console.log('AVISO: sin autenticación y abierto a la red; protégelo con un firewall.');
+  if (!AUTH_ON && HOST !== '127.0.0.1' && HOST !== 'localhost' && HOST !== '::1' && HOST !== '[::1]') console.log('AVISO: sin autenticación, cualquier equipo de la red puede configurar las alertas de Telegram');
 });
 
 function shutdown() {
+  notifier.stop();
   scheduler.stop();
   Array.from(clients.keys()).forEach(dropClient);
   server.close(function () { process.exit(0); });

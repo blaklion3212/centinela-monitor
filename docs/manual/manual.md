@@ -1,8 +1,8 @@
 ---
 title: Manual de usuario y configuración
 subtitle: Dashboard modular de monitoreo de IPs y URLs, estilo PingPlotter / Zabbix
-version: 2.2.0
-date: 18 de noviembre de 2026
+version: 2.3.0
+date: 19 de noviembre de 2026
 ---
 
 # 1. Introducción
@@ -55,7 +55,7 @@ El sistema tiene tres piezas. Entender para qué sirve cada una evita la confusi
 
 1. Descomprime el proyecto (carpeta `centinela-monitor`) en el servidor que hará las mediciones.
 2. Abre una terminal en esa carpeta y ejecuta: `node server/server.js` (también sirve `npm start`).
-3. La terminal muestra la dirección, por ejemplo `Centinela 2.2.0 → http://127.0.0.1:8080`, el número de usuarios, la carpeta de datos usada y, solo en el primer arranque, el usuario inicial con su contraseña (sección 9.1).
+3. La terminal muestra la dirección, por ejemplo `Centinela 2.3.0 → http://127.0.0.1:8080`, el número de usuarios, la carpeta de datos usada y, solo en el primer arranque, el usuario inicial con su contraseña (sección 9.1).
 4. Abre esa dirección en el navegador e inicia sesión con el usuario `administrador` y la contraseña inicial (sección 9.1). Si la contraseña era la aleatoria del registro, el panel te pedirá cambiarla antes de continuar. La insignia de arriba debe decir En vivo.
 5. Ve a Objetivos y agrega tus IPs y URLs (capítulo 6). En el primer arranque el sistema crea data/ con objetivos de ejemplo (DNS Google, DNS Cloudflare, Google, Wikipedia, Sitio de ejemplo y el servidor local); puedes borrarlos.
 
@@ -74,6 +74,8 @@ El sistema tiene tres piezas. Entender para qué sirve cada una evita la confusi
 | CENTINELA_CONCURRENCY | 16 | Mediciones que pueden correr al mismo tiempo (2 a 64), compartidas por todas las organizaciones. Súbela si monitoreas muchos objetivos y las gráficas se actualizan más despacio que el intervalo (ver capítulo 7). |
 | CENTINELA_CHECK_TIMEOUT_MS | 120000 | Plazo máximo, en milisegundos, de una verificación completa de un objetivo (mínimo 5000). Si se excede, el objetivo pasa a DOWN con el motivo “La verificación excedió el tiempo máximo” (sección 3.5). Súbelo solo si tienes verificaciones legítimamente muy lentas. Una sonda que no termina se libera como máximo a 2 veces este plazo (sección 3.5). |
 | CENTINELA_TRUST_PROXY | (vacía) | Lista, separada por comas, de IP de proxies inversos de confianza (por ejemplo 127.0.0.1,10.0.0.5). Solo sirve si pones un proxy delante del panel: con ella el servidor lee la cabecera X-Forwarded-For para saber la IP real de cada cliente y el bloqueo de intentos deja de ser compartido por todos (sección 12.1). Solo IP literales, sin rangos CIDR ni nombres: una entrada que no sea una IP se ignora y el servidor lo avisa al arrancar. Vacía = X-Forwarded-For se ignora. |
+| CENTINELA_TELEGRAM_TOKEN | (vacía) | Token del bot de Telegram para las alertas opcionales (capítulo 19). Si se define, tiene prioridad sobre el guardado en el panel y este queda bloqueado. En contenedor, ponla en el archivo .env (chmod 600). Vacía = el token se gestiona desde Ajustes, Alertas. Un valor sin formato de token se ignora. |
+| CENTINELA_ALERTS_DISABLED | (vacía: permitidas) | Con 1 o true bloquea por completo la función de alertas por Telegram: no se envía nada, ni avisos, ni pruebas, ni búsqueda de chats (sección 19.7). Hay que reiniciar para que surta efecto. |
 
 Ejemplos de arranque con variables:
 
@@ -432,7 +434,11 @@ Reglas que aplica Ajustes al guardar (el formulario y el servidor las comprueban
 
 > **Nota:** después de cambiar umbrales pulsa Guardar ajustes. Los valores se guardan en data/settings.json y todos los paneles abiertos los reciben al instante. Si el servidor encuentra errores, no guarda nada y los muestra sobre el botón. Los usuarios con rol Lector ven los ajustes pero no pueden cambiarlos.
 
-## 8.3 Conexión y datos de demostración
+## 8.3 Alertas por Telegram (solo administradores)
+
+Debajo de los ajustes generales, los administradores ven la sección **Alertas**, que configura los avisos opcionales por Telegram. Está desactivada por defecto y se explica en el capítulo 19.
+
+## 8.4 Conexión y datos de demostración
 
 - El cuadro Conexión indica si estás En vivo (con el nombre, sistema y versión de Node del servidor) o en Demostración. Estos datos del equipo solo se entregan a los administradores; los demás roles ven el cuadro sin ese detalle.
 - En demostración aparece Borrar datos de demostración: elimina objetivos, ajustes y disposición guardados en ese navegador y recarga la página. No afecta a un servidor real.
@@ -455,7 +461,7 @@ La primera vez que arranca el servidor (cuando no existe data/users.json) crea u
 En el registro de arranque (la consola con `node server/server.js`; en contenedor, `docker logs centinela` o `podman logs centinela`) la contraseña generada aparece así:
 
 ```
-Centinela 2.2.0 → http://127.0.0.1:8080
+Centinela 2.3.0 → http://127.0.0.1:8080
 Acceso: inicio de sesión activado (1 usuario(s))
 Usuario inicial creado: administrador (deberá cambiar la contraseña al entrar)
 ============================================================
@@ -843,6 +849,7 @@ Mensajes que puedes ver en el objetivo (como motivo de “Agente sin respuesta�
 | Archivos de datos | La carpeta de datos se crea con permiso 700 y sus archivos con 600; cada guardado se escribe a disco antes de actualizar la memoria. | Conserva esos permisos al restaurar un respaldo. |
 | Archivos expuestos | El servidor solo publica index.html, assets/ y js/. data/, server/ y agent/ nunca se sirven por HTTP. | — |
 | Estado público | GET /api/health responde solo que el servidor está vivo, el modo y si exige inicio de sesión; no incluye la versión. El resto de la API exige sesión, y los datos del equipo servidor solo se entregan a administradores. | — |
+| Alertas por Telegram | Opcionales y desactivadas por defecto. Solo administradores; el token no se devuelve ni se registra; la conexión valida el certificado TLS de api.telegram.org y no sigue redirecciones. Los avisos salen de tu red hacia los servidores de Telegram (sin cifrado de extremo a extremo). | Define el token con CENTINELA_TELEGRAM_TOKEN en el archivo .env (chmod 600), permite la salida solo hacia api.telegram.org:443, usa un grupo privado y bloquea la función con CENTINELA_ALERTS_DISABLED=1 si no debe usarse. No lo actives con CENTINELA_AUTH=off en una red compartida. Capítulo 19. |
 | Comandos del sistema | Los hosts se validan estrictamente y ping/traceroute se ejecutan sin intérprete de comandos, por lo que no se pueden inyectar instrucciones. Los nombres de servicio deben empezar con letra o número. | — |
 | Protección del navegador | Las peticiones POST, PUT y DELETE exigen Content-Type: application/json (si no, 415) y, si el navegador indica el origen, que sea el propio servidor (defensa contra CSRF); la política CSP solo permite scripts propios; los textos de usuario y los valores del agente y de HTTP se escapan antes de mostrarse. | Si automatizas la API con curl u otro cliente, envía siempre la cabecera Content-Type: application/json, incluso sin cuerpo. |
 | Certificados al medir | El monitor no rechaza certificados inválidos para poder informarlos (vencido, autofirmado). | Es intencional: la medición no transmite datos sensibles. |
@@ -883,6 +890,7 @@ CENTINELA_TRUST_PROXY=127.0.0.1 CENTINELA_COOKIE_SECURE=1 CENTINELA_ALLOWED_HOST
 | orgs/<id>/targets.json y layout.json | Objetivos y disposición de cada organización adicional. | Se crean al dar de alta la organización y se borran al eliminarla. |
 | settings.json | Tema, intervalo por defecto, puntos de historial y umbrales. | Se crea con los valores de la sección 8. |
 | layout.json | Ventanas del Panel del Host: tipo, posición, tamaño y configuración. | Máx. 60 ventanas. Para volver a la disposición original bórralo (con el servidor detenido) o usa “Restablecer”. |
+| alerts.json | Alertas por Telegram: si están activadas, token (si no viene de la variable de entorno), chat de destino, nivel de detalle, opciones y los servicios con una caída ya avisada. | Se crea al guardar la configuración de alertas. Contiene el token en texto plano (permiso 600): no lo compartas ni lo subas a un repositorio y protege los respaldos. |
 
 La carpeta se crea con permiso 700 y los archivos con 600 (Linux/macOS).
 
@@ -933,6 +941,10 @@ El propio panel usa esta API, y puedes usarla para integrarte con otros sistemas
 | POST /api/traceroute | Traceroute. Cuerpo: {"targetId":"…"} o {"address":"host"} (los Lectores solo con targetId). Responde 429 si ya tienes uno en curso o hay 3 en total. |
 | GET, PUT /api/settings | Leer o guardar ajustes y umbrales. Si hay valores no válidos (fuera de rango, aviso mayor o igual que el crítico, avisos en 0), responde 400 con la lista errors. |
 | GET, PUT /api/layout?org={id} | Leer o guardar la disposición del Panel de una organización. |
+| GET, PUT /api/alerts | Solo administradores (403 “Solo un administrador puede configurar las alertas” para los demás). Leer o guardar la configuración de alertas por Telegram: enabled, chatId, detail (minimal o full), failsBeforeAlert (1 a 10), notifyRecovery y notifyDegraded. La respuesta nunca incluye el token: solo tokenConfigured, tokenHint (últimos 4 caracteres), tokenSource (env, panel o none) y blockedByEnv. Un valor no válido responde 400 con la lista errors; activar sin token o sin chat también. |
+| PUT, DELETE /api/alerts/token | Solo administradores. Guardar ({"token":"…"}) o borrar el token del panel; al borrarlo se desactivan las alertas. 400 si no tiene formato de token; 409 con code token_from_env si el token viene de CENTINELA_TELEGRAM_TOKEN. |
+| POST /api/alerts/test, POST /api/alerts/chats | Solo administradores. Enviar un mensaje de prueba (cuerpo opcional {"chatId":"…"} para probar un chat sin guardar) y buscar los chats que han escrito al bot. Responden 200 con ok: true, o con ok: false y un code (invalid_token, chat_not_found, no_internet, timeout, rate_limited, blocked, unknown). 400 si falta el token (no_token) o el chat (no_chat); 409 con alerts_disabled_by_env si CENTINELA_ALERTS_DISABLED está activa; 429 con Retry-After si ya hay una acción en curso o pasaron menos de 5 s desde la anterior del mismo administrador. |
+| GET /api/alerts/status | Solo administradores. Estado de los envíos: state (off, ok, error o blocked), lastSentAt, lastError, queued, sentTotal, failedTotal, droppedTotal y note. |
 
 ### Códigos para rutas y métodos
 
@@ -959,6 +971,8 @@ Centinela se puede ejecutar en un contenedor para tenerlo en un servidor de tu r
 5. Si usaste la contraseña aleatoria, el panel te obliga a cambiarla al entrar. En cualquier caso, crea los usuarios que necesites en la sección Usuarios (llave en la barra superior para cambiar tu contraseña).
 6. Abre el puerto 9595 en el firewall del servidor para las redes desde las que se usará el panel.
 
+> **Consejo:** esta sección es el resumen. Si partes de cero (sin Docker ni Podman instalados), sigue el paso a paso completo: sección 14.7 en Linux o sección 14.8 en Windows.
+
 ```
 docker compose up -d --build            # construir e iniciar
 docker compose logs -f                  # ver la bitácora del servidor
@@ -979,6 +993,8 @@ docker compose down -v                  # detener Y BORRAR los datos (usuarios, 
 | CENTINELA_ADMIN_PASSWORD | (se lee del archivo .env; vacía = aleatoria) | Contraseña del primer administrador (mínimo 8 caracteres). Ya no está escrita en el compose.yml: se toma de .env. Solo se usa la primera vez; después se gestiona en el panel y cambiar la variable no tiene efecto. |
 | CENTINELA_ALLOWED_HOSTS | (se lee del archivo .env; vacía = sin filtro) | Nombres o IP, separados por comas, que el servidor acepta en la cabecera Host. Recomendada en LAN para frenar el DNS rebinding. localhost, 127.0.0.1 y ::1 siempre se aceptan (el healthcheck sigue funcionando). |
 | CENTINELA_CONCURRENCY | 16 | Mediciones simultáneas (2 a 64). Súbela si monitoreas muchos objetivos (capítulo 7). |
+| CENTINELA_TELEGRAM_TOKEN | (se lee del archivo .env; vacía = se gestiona desde el panel) | Token del bot de las alertas por Telegram (capítulo 19). Tiene prioridad sobre el guardado en el panel. Es un secreto: defínelo en .env con permisos 600 (`chmod 600 .env`). |
+| CENTINELA_ALERTS_DISABLED | (se lee del archivo .env; vacía = permitidas) | 1 o true bloquea la función de alertas por completo (sección 19.7). |
 | TZ | America/Mexico_City | Zona horaria del contenedor, para las horas de la bitácora del servidor. |
 | volumes | centinela-data:/data | Volumen persistente con toda la configuración (targets, organizaciones, usuarios, ajustes). Sin él se perdería todo al recrear el contenedor. |
 | cap_drop: ALL y cap_add: NET_RAW | activado | Endurecimiento: el contenedor pierde todas las capacidades del sistema salvo NET_RAW, que es necesaria: comprobado en laboratorio, sin ella el ping falla por el setcap del binario. También permite el traceroute. |
@@ -1033,6 +1049,466 @@ docker compose down -v                  # detener Y BORRAR los datos (usuarios, 
 | Tras `podman restart centinela` el contenedor quedó detenido (“rootless netns: kill network process: permission denied”) | Fallo de Podman sin root en ese tipo de equipo, no de Centinela. | `podman start centinela` y, para reiniciar, usa `podman-compose -p <proyecto> restart` o `podman stop` + `podman start` (sección 14.5). |
 | Tras reiniciar el servidor el contenedor no se levanta solo | `podman-restart.service` del usuario está deshabilitado (Podman sin root). | `systemctl --user enable podman-restart.service` y `loginctl enable-linger $USER` (sección 14.5). |
 | Cambié CENTINELA_ADMIN_PASSWORD y no entra con la nueva | Esa variable solo crea el primer usuario. | Entra con la contraseña vigente y cámbiala en el panel, o consulta el capítulo 9 (“Si olvidaste la contraseña”). |
+| “docker” o “podman” no se reconoce como comando (Windows) o “command not found” (Linux) | El motor no está instalado, o la terminal se abrió antes de instalarlo y no conoce la ruta nueva. | Cierra y vuelve a abrir la terminal (en Linux, cierra sesión y entra de nuevo). Si sigue igual, repite la instalación (secciones 14.7 o 14.8) y comprueba con `docker --version` o `podman --version`. |
+| Docker Desktop o la máquina de Podman no inicia: WSL2 no instalado o virtualización desactivada | Falta WSL2 o la virtualización está apagada en BIOS/UEFI. | Ejecuta `wsl --install` en PowerShell como administrador y reinicia; activa la virtualización (suele llamarse Intel VT-x, AMD-V o SVM) en BIOS/UEFI. Pasos exactos: documentación de Microsoft y del producto (sección 14.8). |
+| Error de puerto en uso al iniciar (“port is already allocated”, “address already in use” o similar) | Otro programa usa el 9595 o queda un contenedor anterior. | Busca quién lo usa: en Linux `ss -ltnp \| grep 9595`; en Windows `netstat -ano \| findstr 9595`. Detén ese programa o cambia el primer número de “ports” (por ejemplo "8080:9595"), y abre el panel con el puerto nuevo. |
+| “permission denied” al conectar con el socket de Docker (Linux) | Tu usuario no pertenece al grupo docker. | `sudo usermod -aG docker $USER` y vuelve a iniciar sesión (sección 14.7). No uses `sudo` para todo como solución permanente. |
+| La contraseña del .env no se aplica (sale aleatoria o no entra) | El archivo se llama `.env.txt`, no está junto a compose.yml, tiene un BOM o codificación rara, o ya existía users.json en el volumen. | Comprueba el nombre exacto (en Windows activa “Extensiones de nombre de archivo” en el Explorador), vuélvelo a crear en ASCII (secciones 14.7 y 14.8) y recuerda que solo se lee la primera vez (nota de 14.1). |
+| `podman compose` o `podman-compose`: “no se encuentra el proveedor de compose” o error de conexión con la máquina | Falta el proveedor de compose, o (Windows y Mac) la máquina de Podman no está iniciada. | Instala `podman-compose` o docker-compose (sección 14.8) y ejecuta `podman machine start`; `podman machine list` muestra su estado. |
+
+## 14.7 Paso a paso en Linux
+
+Guía completa para dejar Centinela funcionando en un servidor Linux de tu red, con Podman o con Docker. Elige un motor; no necesitas los dos. Los pasos de Podman sin root son los que se probaron con Centinela; los de Docker siguen su documentación oficial.
+
+> **Nota:** donde un paso depende de la versión de tu distribución, se indica de forma general y se remite a la documentación oficial del producto. Los comandos de instalación pueden variar entre versiones.
+
+**1. Requisitos**
+
+- Un servidor Linux de tu red local (físico o virtual) que esté encendido de forma permanente.
+- Unos 1 GB de memoria RAM libre y algo de espacio en disco para la imagen (de cientos de MB).
+- Acceso a Internet en el servidor, al menos durante la instalación: construir la imagen descarga node:22-bookworm-slim y paquetes de Debian. Si usarás las alertas por Telegram (capítulo 19), también necesita salida HTTPS a api.telegram.org.
+- Un usuario con permiso de `sudo` para instalar programas.
+
+**2. Obtener el proyecto**
+
+Opción A: copia la carpeta del proyecto (o su archivo zip) al servidor, por ejemplo con `scp` desde tu equipo, y descomprímela:
+
+```
+scp centinela-monitor.zip usuario@192.168.1.20:~
+ssh usuario@192.168.1.20
+unzip centinela-monitor.zip
+```
+
+Opción B: si tienes acceso al repositorio privado con git, clónalo con tu método habitual de autenticación (por ejemplo una clave SSH). No escribas usuario y contraseña ni tokens dentro de la dirección del repositorio, porque quedarían guardados en el historial de la terminal y en la configuración de git:
+
+```
+git clone <dirección-del-repositorio> centinela-monitor
+```
+
+Entra en la carpeta, donde están Dockerfile y compose.yml; todos los comandos siguientes se ejecutan desde ahí:
+
+```
+cd centinela-monitor
+ls
+```
+
+**3. Instalar el motor de contenedores**
+
+Elige una de las cuatro opciones, según tu distribución.
+
+*Debian o Ubuntu con Podman (la opción probada con Centinela):*
+
+```
+sudo apt update
+sudo apt install podman podman-compose
+podman --version
+```
+
+*Debian o Ubuntu con Docker:* instala Docker Engine desde el repositorio oficial de Docker, siguiendo la guía de tu distribución en https://docs.docker.com/engine/install/ (los paquetes de las distribuciones pueden ser más antiguos). Al terminar, permite que tu usuario lo use sin `sudo` y abre una sesión nueva para que el cambio se aplique:
+
+```
+sudo usermod -aG docker $USER
+```
+
+Cierra la sesión, vuelve a entrar y comprueba:
+
+```
+docker --version
+docker compose version
+```
+
+> **Importante:** pertenecer al grupo docker equivale, en la práctica, a tener permisos de administrador en ese servidor. Añade solo a personas de confianza.
+
+*RHEL, Rocky Linux o AlmaLinux con Podman:*
+
+```
+sudo dnf install podman
+podman --version
+```
+
+Para el compose hay dos caminos. El primero instala `podman-compose` desde EPEL:
+
+```
+sudo dnf install epel-release
+sudo dnf install podman-compose
+```
+
+El segundo es usar `podman compose` con un proveedor de compose instalado (por ejemplo docker-compose); consulta la documentación de Podman para tu versión. En el resto de esta guía, si usas `podman compose`, escribe un espacio donde dice `podman-compose` (los parámetros son los mismos).
+
+*RHEL, Rocky Linux o AlmaLinux con Docker:* instala Docker CE desde el repositorio oficial de Docker, siguiendo https://docs.docker.com/engine/install/ para tu distribución. Después:
+
+```
+sudo systemctl enable --now docker
+sudo usermod -aG docker $USER
+```
+
+Cierra la sesión, vuelve a entrar y comprueba `docker compose version`.
+
+**4. Crear el archivo .env**
+
+Debe quedar junto a compose.yml. Con `nano`:
+
+```
+nano .env
+```
+
+Escribe estas líneas (cambia los valores por los tuyos), guarda con Ctrl+O y Enter y sal con Ctrl+X:
+
+```
+CENTINELA_ADMIN_PASSWORD=UnaContraseñaLarga
+CENTINELA_ALLOWED_HOSTS=192.168.1.20,centinela.lan
+```
+
+- `CENTINELA_ADMIN_PASSWORD`: contraseña del administrador (mínimo 8 caracteres). Si la omites, el servidor genera una aleatoria (paso 5).
+- `CENTINELA_ALLOWED_HOSTS`: la IP o el nombre con que abrirás el panel; frena el DNS rebinding (sección 14.1).
+- Opcional, para las alertas por Telegram (capítulo 19): `CENTINELA_TELEGRAM_TOKEN=` con el token de tu bot. Es un secreto: no lo compartas ni lo subas a un repositorio.
+
+Alternativa sin editor, en una sola orden:
+
+```
+cat > .env <<'EOF'
+CENTINELA_ADMIN_PASSWORD=UnaContraseñaLarga
+CENTINELA_ALLOWED_HOSTS=192.168.1.20,centinela.lan
+EOF
+```
+
+Protege el archivo para que solo tu usuario lo lea:
+
+```
+chmod 600 .env
+```
+
+**5. Construir y arrancar**
+
+Con Podman:
+
+```
+podman-compose up -d --build
+```
+
+Con Docker:
+
+```
+docker compose up -d --build
+```
+
+La primera vez descarga la imagen base y la construye; puede tardar varios minutos. Al terminar, revisa el estado y el registro:
+
+```
+podman-compose ps
+podman logs centinela
+```
+
+o, con Docker:
+
+```
+docker compose ps
+docker logs centinela
+```
+
+El contenedor se llama `centinela`. Tras unos segundos el estado debe aparecer como healthy (saludable). Si no definiste `CENTINELA_ADMIN_PASSWORD`, la contraseña inicial aleatoria aparece una sola vez en ese registro: cópiala ahora; el panel te obligará a cambiarla al entrar.
+
+**6. Abrir el puerto en el firewall**
+
+Solo hace falta si otros equipos abrirán el panel. Ubuntu con ufw:
+
+```
+sudo ufw allow 9595/tcp
+```
+
+RHEL, Rocky o AlmaLinux con firewalld:
+
+```
+sudo firewall-cmd --permanent --add-port=9595/tcp
+sudo firewall-cmd --reload
+```
+
+Si prefieres limitar el acceso a tu red local, restringe el origen con las reglas de tu firewall (consulta su documentación). En RHEL con SELinux activo: el volumen `centinela-data` del compose no necesita ajustes; solo si lo cambias por una carpeta del servidor (por ejemplo `./datos:/data`) añade `:Z` al final de la ruta (sección 14.3).
+
+**7. Arranque automático al encender el servidor**
+
+El compose.yml ya trae `restart: unless-stopped`. Falta que el motor arranque con el sistema.
+
+Con Docker:
+
+```
+sudo systemctl enable --now docker
+```
+
+Con Podman sin root, activa el servicio de usuario que levanta los contenedores y permite que siga activo sin sesión abierta (detalles en la sección 14.5):
+
+```
+systemctl --user enable podman-restart.service
+loginctl enable-linger $USER
+```
+
+Con Podman con root (`sudo podman-compose ...`) usa en su lugar `sudo systemctl enable podman-restart.service`.
+
+**8. Comprobar que funciona**
+
+Desde el propio servidor:
+
+```
+curl http://127.0.0.1:9595/api/health
+```
+
+Debe responder una confirmación de que el servidor está vivo. Después, desde otro equipo de la red, abre en el navegador `http://192.168.1.20:9595` (sustituye por la IP real del servidor; si no la sabes, `hostname -I` la muestra). Entra con el usuario `administrador` y la contraseña del paso 4 o del registro.
+
+Si abre en el servidor pero no desde otros equipos, revisa el firewall (paso 6) y la tabla de la sección 14.6.
+
+**9. Mantenimiento**
+
+Cada orden se ejecuta desde la carpeta del proyecto. Cambia `podman-compose` por `docker compose` si usas Docker.
+
+Ver el registro en vivo:
+
+```
+podman-compose logs -f
+```
+
+Reiniciar. Con Podman sin root no uses `podman restart` (sección 14.5):
+
+```
+podman-compose -p centinela-monitor restart
+```
+
+El valor de `-p` es el nombre del proyecto; por defecto es el nombre de la carpeta, en minúsculas. Con Docker: `docker compose restart`.
+
+Actualizar a una versión nueva: reemplaza los archivos del proyecto (conserva tu `.env`) y reconstruye. `--force-recreate` obliga a crear de nuevo el contenedor con la imagen nueva:
+
+```
+podman-compose up -d --build --force-recreate
+```
+
+Los datos del volumen se conservan.
+
+Detener sin perder datos:
+
+```
+podman-compose down
+```
+
+Respaldar los datos: sigue la sección 14.3. Haz un respaldo antes de actualizar o desinstalar.
+
+Desinstalar sin dejar rastro:
+
+1. Detén y elimina el contenedor (los datos se conservan):
+
+```
+podman-compose down
+```
+
+2. Solo si quieres perder usuarios, objetivos y ajustes, borra también el volumen (no se puede deshacer; haz antes un respaldo):
+
+```
+podman volume ls
+podman volume rm <nombre-del-volumen>
+```
+
+Con Docker, `docker compose down -v` hace los dos pasos a la vez. El nombre real del volumen aparece en `volume ls` (suele ser `<proyecto>_centinela-data`).
+
+3. Borra la imagen construida:
+
+```
+podman rmi centinela-monitor:latest
+```
+
+4. Borra la carpeta del proyecto y, si ya no los necesitas, el archivo `.env` (contiene la contraseña) y las reglas de firewall del paso 6 (`sudo ufw delete allow 9595/tcp`, o `firewall-cmd --permanent --remove-port=9595/tcp` seguido de `--reload`).
+
+## 14.8 Paso a paso en Windows
+
+> **Nota:** pasos basados en la documentación de Docker y Podman; Centinela se probó en Linux. No se probó en Windows: los nombres de menús y las versiones pueden cambiar, y ante cualquier diferencia manda la documentación oficial del producto que instales.
+
+En Windows el contenedor corre dentro de una máquina virtual (WSL2). Sirve para pruebas, una oficina pequeña o un equipo de apoyo. Para un servicio permanente es preferible un servidor Linux (sección 14.7). Las diferencias de comportamiento están en la sección 14.4.
+
+**1. Requisitos**
+
+- Windows 10 (versión 22H2) o Windows 11, de 64 bits.
+- Virtualización activada en la BIOS/UEFI (suele llamarse Intel VT-x, AMD-V o SVM). Puedes verlo en el Administrador de tareas, pestaña Rendimiento, CPU, campo “Virtualización”.
+- WSL2 instalado. Abre PowerShell como administrador (clic derecho en Inicio, Terminal o PowerShell (administrador)) y ejecuta:
+
+```
+wsl --install
+```
+
+Reinicia el equipo cuando lo pida. Si ya tenías WSL, actualízalo con `wsl --update`.
+- Unos 4 GB de RAM libres para la máquina virtual y el contenedor (orientativo; depende del motor), y salida a Internet para construir la imagen.
+
+**2. Instalar un motor (elige A o B)**
+
+*Opción A: Docker Desktop*
+
+1. Descarga el instalador desde el sitio oficial, https://www.docker.com/products/docker-desktop/ .
+2. Ejecútalo y, si ofrece elegir, deja marcado el uso de WSL 2.
+3. Abre Docker Desktop, acepta los términos y espera a que indique que el motor está en ejecución.
+4. Abre PowerShell (no hace falta ser administrador) y comprueba:
+
+```
+docker --version
+docker compose version
+```
+
+> **Importante:** Docker Desktop tiene condiciones de licencia. En general, el uso en empresas grandes (el criterio oficial menciona más de 250 empleados o más de 10 millones de dólares de ingresos) requiere una suscripción de pago; para otros usos suele ser gratuito. Confirma las condiciones vigentes en los términos oficiales de Docker antes de usarlo en tu organización.
+
+*Opción B: Podman Desktop (gratuito)*
+
+1. Descarga e instala Podman Desktop desde https://podman-desktop.io/ . Si pide instalar Podman o WSL, acepta; el asistente te guía.
+2. Crea e inicia la máquina virtual de Podman. Puedes hacerlo desde Podman Desktop o desde PowerShell:
+
+```
+podman machine init
+podman machine start
+podman --version
+podman machine list
+```
+
+3. Para el compose necesitas un proveedor. Dos caminos: instalar docker-compose desde Podman Desktop (ofrece la opción en su configuración), tras lo cual funciona `podman compose`; o instalar `podman-compose` con Python y pip:
+
+```
+pip install podman-compose
+```
+
+Comprueba que responde con `podman compose version` o `podman-compose --version`. En el resto de esta guía, `podman compose` y `podman-compose` son equivalentes.
+
+**3. Obtener el proyecto**
+
+Copia o descomprime la carpeta del proyecto en una ruta corta y sin espacios, por ejemplo `C:\centinela-monitor`. Abre PowerShell en esa carpeta (en el Explorador, entra en la carpeta, clic derecho, “Abrir en Terminal”; o bien):
+
+```
+cd C:\centinela-monitor
+dir
+```
+
+Debes ver Dockerfile y compose.yml. Si usas git, clona el repositorio con tu método de autenticación habitual, sin poner credenciales en la dirección.
+
+**4. Crear el archivo .env**
+
+Debe quedar junto a compose.yml. Con PowerShell, desde esa carpeta (cambia los valores; usa una contraseña solo con caracteres ASCII, sin acentos ni eñes, para evitar problemas de codificación):
+
+```
+@(
+ "CENTINELA_ADMIN_PASSWORD=UnaContrasenaLarga",
+ "CENTINELA_ALLOWED_HOSTS=192.168.1.20,centinela.lan"
+) | Set-Content -Path .env -Encoding ascii
+```
+
+Cuando uses alertas por Telegram, añade una línea más con `CENTINELA_TELEGRAM_TOKEN=` y el token (es un secreto).
+
+Si prefieres el Bloc de notas: al guardar elige “Todos los archivos” en el tipo y escribe el nombre `.env` entre comillas, y guarda con codificación ANSI o UTF-8 sin BOM, para que no quede `.env.txt` ni un BOM al inicio. Comprueba el resultado:
+
+```
+dir -Force .env*
+```
+
+Restringe el archivo para que solo tu usuario lo lea:
+
+```
+icacls .env /inheritance:r /grant:r "$($env:USERNAME):(R,W)"
+```
+
+**5. Construir y arrancar**
+
+Con Docker Desktop:
+
+```
+docker compose up -d --build
+```
+
+Con Podman:
+
+```
+podman compose up -d --build
+```
+
+La primera vez descarga la imagen base y construye; puede tardar varios minutos. Si Podman rechaza el bloque `sysctls` del compose.yml, quítalo (las líneas `sysctls:` y `net.ipv4.ping_group_range`) y conserva `cap_add: NET_RAW` (sección 14.5). Revisa el estado y el registro:
+
+```
+docker compose ps
+docker logs centinela
+```
+
+(con Podman: `podman compose ps` y `podman logs centinela`). El estado debe pasar a healthy. Si no definiste `CENTINELA_ADMIN_PASSWORD`, la contraseña aleatoria sale una sola vez en ese registro.
+
+**6. Permitir el acceso desde otros equipos (firewall de Windows)**
+
+Para abrir el panel desde otros equipos de la red, crea una regla de entrada. Abre PowerShell como administrador y ejecuta:
+
+```
+New-NetFirewallRule -DisplayName "Centinela 9595" -Direction Inbound -Protocol TCP -LocalPort 9595 -Action Allow -Profile Private
+```
+
+La regla solo aplica a redes marcadas como “Privada”; si tu red está como “Pública”, cámbiale el perfil en la configuración de red de Windows o ajusta `-Profile`. Con Docker Desktop (WSL2) el puerto se publica en Windows, así que los otros equipos entran por la IP de Windows, no por la de la máquina virtual. Con Podman el comportamiento depende de la versión y del modo de la máquina; si desde otro equipo no abre, consulta la documentación de Podman sobre redes en Windows.
+
+**7. Arranque automático**
+
+El compose.yml ya trae `restart: unless-stopped`; falta que el motor arranque.
+
+- Docker Desktop: en Settings, General, activa “Start Docker Desktop when you sign in” (el texto puede variar según la versión). Docker Desktop arranca al iniciar sesión un usuario, no como servicio del sistema: si el equipo se reinicia y nadie inicia sesión, Centinela no estará disponible. Para un servicio sin sesión abierta, usa un servidor Linux.
+- Podman: la máquina no arranca sola. Crea una tarea programada que ejecute `podman machine start` al iniciar sesión. En PowerShell como administrador:
+
+```
+$accion = New-ScheduledTaskAction -Execute "podman.exe" -Argument "machine start"
+$disparador = New-ScheduledTaskTrigger -AtLogOn
+Register-ScheduledTask -TaskName "Podman machine start" -Action $accion -Trigger $disparador
+```
+
+La tarea se ejecuta con el usuario que la registra y necesita su sesión; también puedes crearla con el Programador de tareas de Windows.
+
+**8. Comprobar que funciona**
+
+En el propio equipo:
+
+```
+Invoke-WebRequest http://127.0.0.1:9595/api/health -UseBasicParsing
+```
+
+Debe responder con código de estado 200. Después abre `http://127.0.0.1:9595` en el navegador, o desde otro equipo `http://192.168.1.20:9595` (la IP de este Windows; `ipconfig` la muestra). Entra con el usuario `administrador` y la contraseña del paso 4 o del registro.
+
+**9. Mantenimiento y desinstalación**
+
+Cada orden desde la carpeta del proyecto; con Podman cambia `docker compose` por `podman compose`.
+
+Actualizar: reemplaza los archivos del proyecto (conserva `.env`) y ejecuta:
+
+```
+docker compose up -d --build --force-recreate
+```
+
+Detener sin perder datos:
+
+```
+docker compose down
+```
+
+Respaldar: sección 14.3 (adapta las rutas de la orden al formato de Windows).
+
+Desinstalar sin dejar rastro:
+
+1. Elimina el contenedor y, solo si quieres perder usuarios, objetivos y ajustes, el volumen (no se puede deshacer; haz antes un respaldo):
+
+```
+docker compose down -v
+```
+
+2. Borra la imagen:
+
+```
+docker rmi centinela-monitor:latest
+```
+
+3. Elimina la regla del firewall (PowerShell como administrador):
+
+```
+Remove-NetFirewallRule -DisplayName "Centinela 9595"
+```
+
+4. Borra la carpeta `C:\centinela-monitor` (incluye `.env`) y, si lo creaste, la tarea programada con `Unregister-ScheduledTask -TaskName "Podman machine start"`. Si ya no usarás contenedores, desinstala Docker Desktop o Podman Desktop desde “Aplicaciones instaladas”.
+
+**Limitaciones en Windows**
+
+- El contenedor corre en una máquina virtual: `127.0.0.1` dentro de Centinela es el contenedor, no Windows (sección 14.4). Para medir el equipo Windows usa su IP de red y, para CPU, RAM y disco, el agente nativo (capítulo 11).
+- `network_mode: host` no está disponible.
+- El ping y el traceroute del contenedor salen por la red de la máquina virtual (NAT); algunos entornos filtran ICMP. Si el panel dice “Ping no disponible”, consulta la sección 14.6.
 
 # 15. Recetas: configuraciones por situación
 
@@ -1182,6 +1658,7 @@ Cada receta indica cómo dar de alta el objetivo y qué ventanas conviene tener 
 | El agente no arranca: “exige --token (o CENTINELA_AGENT_TOKEN)” | Escucha fuera de 127.0.0.1 sin token. | Define CENTINELA_AGENT_TOKEN antes de ejecutarlo. |
 | Mi herramienta recibe 405 “Método no permitido” de la API | La ruta existe pero no admite ese método (antes podía verse como 404 o 403). | Mira la cabecera Allow de la respuesta y usa uno de esos métodos (sección 13.3). Una ruta que no existe responde 404. |
 | Los ajustes no se guardan y aparece una lista de errores (por ejemplo `En "Latencia (ms)" el aviso (x) debe ser menor que el crítico (y).`) | Un aviso es mayor o igual que el crítico (en SSL, menor o igual), hay un aviso en 0 o un valor fuera de rango. | Corrige los valores que indica la lista (sección 8.2). Un campo vacío no es un error: conserva el valor anterior. |
+| Las alertas por Telegram no llegan o la sección Alertas muestra un error (token, chat, “No hay conexión con api.telegram.org”…) | Token o chat incorrectos, bot bloqueado, sin salida HTTPS a api.telegram.org:443, función bloqueada con CENTINELA_ALERTS_DISABLED o aún no se cumplen los N fallos seguidos. | Sigue la tabla de la sección 19.11. |
 | Las ventanas de CPU/Disco/Servicios dicen “No hay objetivos compatibles” | Ningún objetivo tiene el agente activo. | Activa “Salud del servidor” en un objetivo (127.0.0.1 no necesita instalar nada). |
 | Una ventana dice “Esperando la primera medición” | Aún no termina el primer ciclo. | Espera un intervalo o usa “verificar ahora” en Estado de servicios. |
 | Sin I/O wait ni ancho de banda | El servidor remoto es Windows o macOS. | Es una limitación: solo Linux entrega esas métricas. |
@@ -1190,7 +1667,8 @@ Cada receta indica cómo dar de alta el objetivo y qué ventanas conviene tener 
 
 # 17. Alcance y limitaciones
 
-- Sin notificaciones externas: no envía correo, SMS ni mensajes. Las alertas son visuales (colores, insignias, eventos y título de la pestaña).
+- Notificaciones externas: la única opción es Telegram, opcional y desactivada por defecto (capítulo 19). No envía correo, SMS ni webhooks. Sin esa función, las alertas son visuales (colores, insignias, eventos y título de la pestaña).
+- Alertas por Telegram: un solo chat de destino para todas las organizaciones; solo avisa de cambios de estado de un objetivo (CAÍDO, DEGRADADO y RECUPERADO), sin horario silencioso ni comandos desde Telegram; salida directa a Internet, sin soporte de proxy; la cola de avisos vive en memoria y se pierde al reiniciar.
 - Roles simples: administrador, operador y lector, sin permisos por organización: quien entra ve todas las organizaciones (capítulos 7 y 9). Un solo método de acceso (usuario y contraseña); no hay LDAP, doble factor ni HTTPS integrado (para HTTPS usa un proxy; capítulo 12).
 - Historial en memoria: se pierde al reiniciar el servidor y no genera reportes de largo plazo. Configuración y disposición sí son permanentes.
 - Sesiones en memoria: al reiniciar el servidor todos los usuarios deben iniciar sesión de nuevo.
@@ -1229,6 +1707,194 @@ Cada receta indica cómo dar de alta el objetivo y qué ventanas conviene tener 
 | Huella (fingerprint) | Resumen SHA-256 del certificado TLS del agente (64 caracteres hexadecimales). El panel la compara antes de enviar el token para confirmar que habla con el agente correcto. |
 | Proxy de confianza | Proxy inverso cuya IP figura en CENTINELA_TRUST_PROXY; solo de él se acepta la cabecera X-Forwarded-For para conocer la IP real del cliente. |
 | Verificación huérfana | Verificación cuya sonda sigue viva después de vencer el plazo global; reduce la capacidad de mediciones hasta que termina o se libera (2 × el plazo). |
+| Bot de Telegram | Cuenta automática de Telegram que Centinela usa para enviar los avisos. Se crea con @BotFather. |
+| Token del bot | Clave secreta del bot (con la forma `número:secreto`). Quien la tenga puede controlar el bot; si se filtra, se rota con `/token` en @BotFather. |
+| Chat de destino | Chat, grupo o canal de Telegram que recibe los avisos, identificado por un número (negativo en grupos y canales) o por el @usuario de un canal público. |
+| BotFather | Bot oficial de Telegram para crear y administrar bots (@BotFather). |
+
+# 19. Alertas por Telegram
+
+Centinela puede avisarte por Telegram cuando un servicio cae, cuando se recupera y, si lo pides, cuando queda DEGRADADO, además de mostrarlo en el panel. Es una función **opcional** y **viene desactivada**: mientras no la configures y la actives, Centinela no envía nada a Internet y se comporta igual que antes. Está disponible a partir de la versión 2.3.0 y solo la configuran los administradores, en Ajustes, en la sección Alertas; Operadores y Lectores no la ven.
+
+## 19.1 Qué necesitas
+
+| Requisito | Detalle |
+|---|---|
+| Rol | Administrador. La sección Alertas no aparece a otros roles y la API la rechaza con 403. |
+| Servidor real | En modo demostración la sección solo dice “Disponible solo con el servidor.” |
+| Una cuenta de Telegram y un bot | El bot lo creas tú, gratis, con @BotFather (sección 19.2). Se recomienda un bot dedicado a Centinela (sección 19.3). |
+| Salida a Internet | El servidor de monitoreo debe poder abrir conexiones HTTPS hacia `api.telegram.org`, puerto 443. No hace falta abrir ningún puerto de entrada: Centinela es quien llama a Telegram. |
+| Sin proxy de salida | En la 2.3.0 la salida es directa; no hay soporte de proxy HTTP/HTTPS. Si el servidor solo llega a Internet a través de un proxy, las alertas no funcionarán. |
+
+## 19.2 Configuración paso a paso
+
+Dentro de Ajustes, la sección Alertas incluye un panel plegable **Cómo configurarlo** con estos mismos pasos. Se muestra abierto mientras no haya token ni chat; después queda plegado y el navegador recuerda cómo lo dejaste.
+
+![Ajustes, sección Alertas sin configurar: panel “Cómo configurarlo” con los seis pasos, aviso de privacidad e indicador “Sin configurar”.](img/alertas-01.jpg)
+
+1. En Telegram abre **@BotFather**, envía `/newbot`, responde a las preguntas (nombre y usuario del bot) y copia el token que te entrega. Tiene esta forma (ejemplo ficticio): `123456789:AAAA…`.
+2. En Centinela, ve a Ajustes, sección Alertas. Pega el token en **Token del bot** y pulsa **Guardar token**. El panel solo muestra después “configurado (…XXXX)”, con los cuatro últimos caracteres; nunca vuelve a mostrar el token completo. Pulsar Enter dentro del campo del token también lo guarda.
+3. Escríbele un mensaje al bot (búscalo por su usuario y pulsa Iniciar o envía `/start`), o añádelo al grupo o canal donde quieres recibir los avisos (sección 19.3).
+4. Pulsa **Buscar mis chats**. Aparece una lista con el título, el tipo, el @usuario y el número de cada chat (hasta 20). Pulsa el que quieras: se rellena **Chat de destino**. Telegram conserva los mensajes recibidos por un bot solo unas 24 horas, así que escribe al bot poco antes de buscar. Si ya conoces el identificador (por ejemplo `-1001234567890`) o el @usuario de un canal público, puedes escribirlo directamente en el campo.
+5. Pulsa **Enviar mensaje de prueba**. En el chat debe llegar “✅ Centinela: mensaje de prueba” con la versión, y el panel dice “Mensaje de prueba enviado: revisa el chat en Telegram.”. La prueba usa el chat que está escrito en el campo aunque aún no lo hayas guardado.
+6. Marca **Enviar alertas por Telegram** y pulsa **Guardar**. Aparece “Alertas guardadas”. Para activar hacen falta token y chat; si falta alguno, la lista de errores sobre el botón lo indica.
+
+![Sección Alertas configurada: token guardado, chat de destino, opciones, resultado de la prueba y estado “Funcionando”.](img/alertas-02.jpg)
+
+> **Nota:** “Enviar mensaje de prueba” y “Buscar mis chats” se limitan a una acción a la vez por administrador y a una cada 5 segundos. Si pulsas demasiado pronto verás “Espera unos segundos antes de repetir esta acción”.
+
+## 19.3 Grupos, canales y bot dedicado
+
+| Destino | Qué hacer |
+|---|---|
+| Chat personal | Escríbele al bot (`/start`) y usa “Buscar mis chats”. El identificador es un número positivo. |
+| Grupo | Añade el bot al grupo. Si no aparece en “Buscar mis chats”, escribe `/start@nombre_del_bot` dentro del grupo (con el modo de privacidad habitual de los bots, en un grupo Telegram solo les entrega los comandos) o quítalo y vuelve a añadirlo. El identificador de un grupo es negativo. |
+| Grupo que pasa a supergrupo | Telegram le cambia el identificador. Centinela lo detecta al enviar, actualiza el chat guardado, reintenta una vez y lo anota en el Estado: “El grupo pasó a supergrupo; chat actualizado”. Si lo notas en la prueba con un chat sin guardar, el panel informa del identificador nuevo. |
+| Canal | El bot debe ser **administrador** del canal. Un canal público se puede escribir como `@nombre_del_canal`; uno privado, con su número (empieza por `-100`). |
+| Bot dedicado | Crea un bot solo para Centinela. Si otro programa lee los mensajes de ese bot o tiene un webhook activo, “Buscar mis chats” falla (Telegram informa de un conflicto) y puede interferir con el otro programa. Centinela consulta los mensajes pendientes sin confirmarlos ni borrarlos, pero aun así conviene no compartir el bot. |
+
+En la 2.3.0 hay un solo chat de destino para todas las organizaciones; no se puede asignar un chat distinto a cada una. Siempre puedes escribir el chat a mano si la búsqueda no lo encuentra.
+
+## 19.4 Opciones
+
+| Opción | Qué hace | Valores | Cuándo cambiarla |
+|---|---|---|---|
+| Enviar alertas por Telegram | Enciende o apaga los avisos. | Desactivado por defecto. | Al terminar la configuración. Desmárcala para pausar los avisos sin perder la configuración. |
+| Token del bot | Clave del bot que entrega @BotFather. | Se guarda en el servidor; no se vuelve a mostrar. | Sección 19.6. |
+| Chat de destino | Chat, grupo o canal que recibe los avisos. | Número (por ejemplo `-1001234567890`) o @canal público. | Para cambiar de destino. Los avisos ya en espera salen al chat anterior. |
+| Nivel de detalle | Qué lleva cada aviso. | **Mínimo** (por defecto): nombre del servicio, organización y estado. **Completo**: además la dirección, el motivo y la hora. | Completo si quien lee el chat necesita el contexto sin abrir el panel (sección 19.8 sobre privacidad). |
+| Avisar tras N fallos seguidos | Cuántas comprobaciones fallidas seguidas se necesitan antes de avisar. | Entero de 1 a 10. Por defecto 2. | Súbelo para evitar falsas alarmas por fallos aislados; con 1 avisa en la primera caída. |
+| Avisar de recuperaciones | Avisa cuando un servicio que se había avisado como caído o degradado vuelve a funcionar. | Activada por defecto. | Desmárcala si solo te interesan las caídas. |
+| Avisar también de DEGRADADO | Avisa cuando un servicio pasa a DEGRADADO, no solo cuando cae. | Desactivada por defecto. | Actívala si quieres enterarte de latencias altas, certificados por vencer, etc. Genera más mensajes. |
+
+Botones de la sección: **Guardar** (guarda las opciones del formulario, no el token), **Guardar token**, **Borrar token** (pide confirmación; además desactiva las alertas porque ya no hay token), **Buscar mis chats**, **Enviar mensaje de prueba** y **Actualizar estado**. Cada campo tiene un icono “?” con una explicación breve.
+
+## 19.5 Cómo se comportan los avisos
+
+Los avisos se envían como texto plano. Cada línea principal lleva un icono, el nombre del servicio y el estado:
+
+```
+🔴 Servidor web: CAÍDO
+🟠 [Cliente A] Portal clientes: DEGRADADO
+🟢 [Cliente A] Portal clientes: RECUPERADO
+```
+
+La etiqueta entre corchetes es el nombre de la organización y **solo aparece cuando la organización no es la principal (Host)**. Con el nivel **Completo** se añaden líneas:
+
+```
+🔴 [Cliente A] Portal clientes: CAÍDO
+Dirección: https://portal.ejemplo.com/login
+Motivo: Sin respuesta al ping (100 % de pérdida)
+Hora: 2026-11-19 10:32:05
+```
+
+En un aviso de recuperación el motivo es “Servicio recuperado”. La dirección se envía **sin usuario, contraseña ni parámetros**: `https://usuario:clave@host/ruta?token=abc` sale como `https://host/ruta`. Los saltos de línea y otros caracteres de control de un nombre o motivo se sustituyen por espacios, y los nombres de más de 200 caracteres se recortan con “…”.
+
+| Regla | Cómo funciona |
+|---|---|
+| Fallos seguidos | Se avisa de una caída cuando el servicio acumula N resultados DOWN seguidos (N = “Avisar tras N fallos seguidos”). Una caída aislada de menos de N comprobaciones seguida de una recuperación no genera ningún aviso. |
+| Un aviso por caída | Mientras el servicio siga caído no se repite el aviso. |
+| Recuperación | Solo se avisa si antes se avisó la caída (o la degradación), y solo con “Avisar de recuperaciones” marcada. Si no se avisó la caída, no se avisa la recuperación. |
+| DEGRADADO activado | Se avisa tras N resultados seguidos DEGRADADO o DOWN. Solo se avisa cuando la **gravedad sube**: de DEGRADADO a DOWN avisa la caída (tras N DOWN seguidos); de DOWN a DEGRADADO no avisa. Con DEGRADADO desactivado, un resultado DEGRADADO ni cuenta como fallo ni interrumpe una racha de caídas. |
+| Estado desconocido | No genera avisos. |
+| Agrupación | Los avisos para un mismo chat que ocurren dentro de una ventana de 30 segundos se envían en un solo mensaje con el encabezado “N avisos” y una línea por servicio. Se muestran hasta 20; el resto se resume como “… y N más”. En modo Completo, los datos de cada servicio van con sangría bajo su línea. |
+| Límites de Telegram | Un mensaje admite hasta 4096 caracteres (si no cabe, se acortan las líneas mostradas). Se respeta el ritmo de Telegram: como máximo un mensaje por segundo por chat y 20 por minuto en grupos. Si Telegram pide esperar (error 429), Centinela espera ese tiempo y reintenta. |
+| Reintentos | Un error temporal (red, plazo de 10 s, fallo 5xx de Telegram) se reintenta con esperas de 2, 4, 8 y 16 segundos, hasta 5 intentos; después el aviso se descarta y se anota en “fallidos”. Un error definitivo (token inválido, chat no encontrado, bot bloqueado) no se reintenta. |
+| Cola | Los avisos pendientes viven en memoria; la cola admite 200 mensajes (el exceso descarta los más antiguos y se cuenta en “descartados”). |
+| Al reiniciar | Centinela recuerda en `data/alerts.json` qué servicios tienen una caída avisada. Tras reiniciar **no repite** esos avisos aunque sigan caídos, y **sí avisa la recuperación** pendiente cuando vuelvan a funcionar. Los servicios caídos que no se habían avisado empiezan a contar de nuevo (necesitan N fallos seguidos). Los avisos que estaban en cola o dentro de la ventana de agrupación al reiniciar se pierden. |
+| Al desactivar | Desactivar las alertas (o borrar el token) borra esa memoria: al volver a activarlas se parte de cero y no se avisan recuperaciones de caídas antiguas. |
+| Servicios pausados o eliminados | Un servicio pausado pierde su racha de fallos pero conserva su caída avisada, para avisar la recuperación si se reactiva. Si se elimina, se olvida y no se avisa su recuperación. Si el servicio se elimina mientras su aviso esperaba, el aviso se envía igualmente con los datos que tenía. |
+
+Ejemplo de lo que llega al chat (servicios y organización ficticios):
+
+```
+🔴 [Cliente Ejemplo] Portal intranet: CAÍDO
+🟢 [Cliente Ejemplo] Portal intranet: RECUPERADO
+3 avisos
+🔴 Correo: CAÍDO
+🔴 [Cliente Ejemplo] VPN: CAÍDO
+🔴 [Cliente Ejemplo] DNS interno: CAÍDO
+```
+
+## 19.6 El token: en el panel o en una variable de entorno
+
+Hay dos formas de dar el token a Centinela, y la variable de entorno **tiene prioridad**:
+
+| Dónde | Cómo funciona |
+|---|---|
+| Panel (Token del bot) | Se guarda en `data/alerts.json` (permiso 600, en texto plano, igual que los tokens de los agentes). El panel y la API nunca lo devuelven: solo informan de si existe y de sus 4 últimos caracteres. |
+| Variable `CENTINELA_TELEGRAM_TOKEN` | Recomendada: el secreto queda fuera de `data/` y de los respaldos. Con ella definida, el campo del token y los botones **Guardar token** y **Borrar token** quedan bloqueados, y el Estado dice “configurado (…XXXX) · definido por variable de entorno”. Para pasar a gestionar el token desde el panel, quita la variable y reinicia. Si el valor no tiene formato de token, se ignora y el Estado muestra la nota “La variable no tiene formato de token (CENTINELA_TELEGRAM_TOKEN): se ignora.”. |
+
+En contenedor, defínela en el archivo `.env` junto a `compose.yml` (el compose ya la pasa al contenedor, vacía por defecto):
+
+```
+# .env  (protégelo: chmod 600 .env, y no lo subas a ningún repositorio)
+CENTINELA_TELEGRAM_TOKEN=123456789:AAAA…pega-aquí-tu-token-completo
+```
+
+Después ejecuta `docker compose up -d` (o `podman-compose up -d`) para recrear el contenedor con la variable. Si ejecutas Centinela directamente con Node, evita escribir el token en la línea de comandos (queda en el historial del shell) y usa un servicio de systemd con `EnvironmentFile=`, como en la sección 11.1.
+
+## 19.7 Bloquear la función por completo
+
+Si tu organización no permite avisos externos, define `CENTINELA_ALERTS_DISABLED=1` (también vale `true`) y reinicia. Con ella no se envía nada: ni avisos, ni mensajes de prueba, ni búsqueda de chats. La sección Alertas muestra un aviso rojo (“Las alertas están bloqueadas por la variable de entorno CENTINELA_ALERTS_DISABLED…”), el interruptor queda deshabilitado y el Estado dice “Bloqueadas por el entorno”. La configuración guardada no se borra: al quitar la variable y reiniciar, todo vuelve a funcionar como estaba. Por defecto la variable está vacía (permitida).
+
+## 19.8 Privacidad
+
+- **Qué sale de tu red local:** el nombre del servicio, el nombre de su organización (si no es Host) y el estado. Con el nivel Completo, además la dirección (sin usuario, contraseña ni parámetros), el motivo y la hora. No se envían tokens de agentes ni credenciales.
+- **Por dónde pasa:** por los servidores de Telegram, fuera de tu red. Los chats con bots **no tienen cifrado de extremo a extremo** (van cifrados entre tu aplicación y Telegram, pero Telegram puede leerlos). Quien pertenezca al chat, grupo o canal verá los avisos: usa un grupo privado con las personas necesarias.
+- **El token:** nunca se muestra completo ni se escribe en el registro del servidor; cualquier texto de error lo oculta. La conexión con Telegram valida el certificado TLS y no sigue redirecciones.
+- **Registro del servidor:** cada cambio queda como línea `[alertas] …` con el nombre del administrador (“activadas”, “ajustes guardados (campos)”, “token guardado desde el panel”), sin valores secretos.
+- **Quién puede configurarla:** solo administradores. Con `CENTINELA_AUTH=off` cualquiera que llegue al panel puede hacerlo; si además el servidor escucha fuera de loopback, el arranque lo avisa: “AVISO: sin autenticación, cualquier equipo de la red puede configurar las alertas de Telegram”.
+
+El panel muestra siempre, bajo el panel de ayuda, un resumen de este aviso de privacidad.
+
+## 19.9 Rotar o revocar el token
+
+Si el token se filtró (lo pegaste en un chat, salió en una captura, quedó en un respaldo), cámbialo de inmediato: en @BotFather envía `/token`, elige el bot y genera uno nuevo; el anterior deja de funcionar. Después guarda el nuevo (en el panel con **Guardar token**, o en `.env` y recreando el contenedor). Hasta entonces el Estado mostrará “Con errores” con el rechazo del token. Si ya no quieres usar la función, usa **Borrar token** o desactívala.
+
+## 19.10 El indicador de estado
+
+| Estado | Significado |
+|---|---|
+| Sin configurar | No hay token ni chat. Muestra “Aún no hay token ni chat. Sigue los pasos de “Cómo configurarlo”, más arriba.”, sin errores. |
+| Desactivadas | Hay configuración, pero el interruptor está apagado (o falta token o chat). |
+| Funcionando | Las alertas están activas y el último envío salió bien. |
+| Con errores | El último envío falló. Debajo aparece el último error con su fecha. Vuelve a “Funcionando” en cuanto un envío sale bien. |
+| Bloqueadas por el entorno | `CENTINELA_ALERTS_DISABLED` está definida (sección 19.7). |
+
+Debajo del indicador se ven “Último envío correcto”, “Último error” y los contadores En cola, enviados, fallidos y descartados (descartados: avisos que ni llegaron a enviarse por cola llena, sin destino o función apagada). Pulsa **Actualizar estado** para refrescarlos. Los contadores viven en memoria y empiezan de cero al reiniciar el servidor.
+
+## 19.11 Problemas frecuentes
+
+Los errores de Telegram aparecen en la sección con la causa y la acción; esta tabla los amplía.
+
+| Síntoma | Causa probable | Solución |
+|---|---|---|
+| “Telegram rechazó el token (401): revisa que lo copiaste completo desde @BotFather.” (también con 404) | Token incompleto o mal copiado, bot eliminado o token ya rotado o revocado. | Copia el token entero desde @BotFather y guárdalo de nuevo. Si lo rotaste, guarda el nuevo (sección 19.9). |
+| “Parece incompleto: cópialo entero desde BotFather” al pulsar Guardar token | El texto no tiene el formato `número:secreto`. | Vuelve a copiarlo sin espacios ni saltos de línea. |
+| “Telegram no encuentra ese chat: escríbele primero al bot o añádelo al grupo y usa “Buscar mis chats”.” | El identificador es incorrecto, nadie ha escrito al bot o el bot no está en el grupo. | Escríbele al bot o añádelo y usa “Buscar mis chats”, o corrige el identificador. |
+| “No hay conexión con api.telegram.org: el servidor necesita salida a Internet por el puerto 443.” | Sin Internet, DNS que no resuelve o un firewall que bloquea HTTPS hacia Telegram. | Permite la salida del servidor de monitoreo hacia `api.telegram.org:443` (en contenedor, desde la red del contenedor). No hay soporte de proxy en la 2.3.0. |
+| “Telegram no respondió a tiempo: reintenta en un momento y revisa la salida a Internet del servidor.” | La petición pasó el plazo de 10 s: red lenta o filtrada. | Reintenta; si persiste, revisa la conexión y el firewall. |
+| “Telegram pidió esperar … antes de enviar más mensajes: reintenta pasado ese tiempo.” | Se superó un límite de Telegram (por ejemplo, mucho tráfico al mismo chat). | Espera el tiempo indicado. Los avisos reales se reintentan solos respetando esa espera; en la prueba, repítela después. |
+| “El bot fue bloqueado o expulsado del chat: vuelve a añadirlo o desbloquéalo y reintenta.” | Bloqueaste al bot, lo sacaron del grupo o dejó de ser administrador del canal. | Vuelve a añadirlo (o desbloquéalo, o hazlo administrador del canal) y repite la prueba. |
+| “Ese destino es un bot (quizá el propio bot)…” | En «Chat de destino» se escribió el usuario de un bot, por ejemplo el del propio bot (`@MiBot_bot`). Telegram no deja que un bot escriba a otro. | Escríbele al bot desde tu cuenta de Telegram, pulsa **Buscar mis chats** y elige tu chat (un número) o el grupo. |
+| “Aún no has iniciado el chat con el bot…” | El chat es el de una persona que nunca abrió el bot. | Abre el bot en Telegram, pulsa **Iniciar** (/start) y repite la prueba. |
+| “Telegram devolvió un error inesperado: revisa el token y el chat, y reintenta.” | Respuesta no prevista; en el detalle puede aparecer un conflicto por un webhook u otro programa que usa el bot. | Revisa token y chat; usa un bot dedicado (sección 19.3). |
+| “Falta el token del bot…” o “Falta el chat de destino…” | Se pulsó la prueba o la búsqueda sin token o sin chat. | Guarda el token o rellena el chat. |
+| “Para activar las alertas falta el token del bot…” o “…falta el chat de destino…” al guardar | Se intentó activar sin uno de los dos. | Guarda el token y elige el chat antes de activar. |
+| “Las alertas están desactivadas por la variable de entorno CENTINELA_ALERTS_DISABLED…” | La función está bloqueada (sección 19.7). | Quita la variable y reinicia el servidor. |
+| “El token viene de la variable de entorno … y no se puede cambiar desde aquí.” | Está definida `CENTINELA_TELEGRAM_TOKEN` (tiene prioridad). | Cambia el valor en `.env` y reinicia, o quita la variable. |
+| “Espera unos segundos antes de repetir esta acción” o “Ya hay una acción de alertas en curso…” | Límite local de Centinela: una acción a la vez y una cada 5 s. | Espera unos segundos. |
+| Nada llega tras reiniciar el servidor | Es normal: los avisos pendientes de cola y de la ventana de agrupación se pierden, y los servicios que ya estaban avisados como caídos no se repiten. Los que no estaban avisados necesitan N fallos seguidos desde cero. | Espera N comprobaciones. La recuperación de lo ya avisado sí llegará. Para comprobar el canal, usa “Enviar mensaje de prueba”. |
+| No llega el aviso de un servicio que cayó | No acumuló N fallos seguidos, está DEGRADADO y esa opción está desactivada, ya se había avisado y no se recuperó, o el interruptor está apagado. | Revisa el Estado y “Avisar tras N fallos seguidos”; para forzar un reinicio del conteo, desactiva y vuelve a activar las alertas. |
+| No llega la recuperación | La caída nunca se avisó, “Avisar de recuperaciones” está desmarcada o se desactivaron las alertas entre medias. | Revisa esas opciones; solo se avisa la recuperación de lo avisado. |
+| Llegan muchos avisos | N demasiado bajo, “Avisar también de DEGRADADO” activada o servicios que oscilan. | Sube “Avisar tras N fallos seguidos” (por ejemplo a 3 o 5), desactiva DEGRADADO o ajusta los umbrales (sección 8.2). Los avisos simultáneos ya se agrupan en una ventana de 30 s. |
+| El bot no aparece en “Buscar mis chats” | Nadie ha escrito al bot en las últimas 24 h, el bot no es administrador del canal, no se pulsó `/start@nombre_del_bot` en el grupo, o otro programa lee los mensajes del bot. | Escríbele al bot y busca de nuevo; en un grupo usa `/start@nombre_del_bot`; en un canal hazlo administrador; o escribe el chat a mano. Usa un bot dedicado. |
+| Un grupo dejó de recibir avisos y el identificador cambió | El grupo pasó a supergrupo y Telegram le dio otro identificador. | Centinela lo corrige solo al enviar (“El grupo pasó a supergrupo; chat actualizado”). Si no, usa “Buscar mis chats” y guarda el nuevo. |
+
+## 19.12 Referencia de la API
+
+Las rutas `/api/alerts*` son solo para administradores (403 “Solo un administrador puede configurar las alertas” para el resto, 401 sin sesión) y están en la sección 13.3. El token nunca aparece en una respuesta.
 
 # Anexo A. Referencia rápida de ventanas
 
@@ -1285,6 +1951,8 @@ La cuadrícula tiene 12 columnas; cada fila mide 34 px y el espacio entre ventan
 | CENTINELA_CONCURRENCY | Servidor | 16 (2 a 64) | 2.3, 7.4 |
 | CENTINELA_CHECK_TIMEOUT_MS | Servidor | 120000 (mínimo 5000) | 2.3, 3.5 |
 | CENTINELA_TRUST_PROXY | Servidor | vacía: X-Forwarded-For se ignora | 2.3, 12.1 |
+| CENTINELA_TELEGRAM_TOKEN | Servidor | vacía (token en el panel) | 2.3, 19.6 |
+| CENTINELA_ALERTS_DISABLED | Servidor | vacía: alertas permitidas (1 o true las bloquea) | 2.3, 19.7 |
 | CENTINELA_AGENT_TOKEN | Agente | vacío | 11.2 |
 | CENTINELA_AGENT_HOST | Agente | 0.0.0.0 | 11.2 |
 | CENTINELA_AGENT_PORT | Agente | 9100 | 11.2 |
@@ -1320,3 +1988,9 @@ La cuadrícula tiene 12 columnas; cada fila mide 34 px y el espacio entre ventan
 | `En "Latencia (ms)" el aviso (x) debe ser menor que el crítico (y).` | Guardar Ajustes con el aviso mayor o igual que el crítico; en SSL: “…mayor que el crítico (y): se avisa con más días de margen.” | 8.2 |
 | “CENTINELA_TRUST_PROXY: entrada ignorada (no es una IP)” | Consola del servidor al arrancar | 12.1 |
 | “[scheduler] verificación huérfana: …” | Consola del servidor | 3.5 |
+| “Telegram rechazó el token (401)…”, “Telegram no encuentra ese chat…”, “No hay conexión con api.telegram.org…”, “Telegram no respondió a tiempo…”, “Telegram pidió esperar…”, “El bot fue bloqueado o expulsado del chat…”, “Ese destino es un bot…”, “Aún no has iniciado el chat con el bot…” | Sección Alertas, al probar, buscar chats o en el Estado | 19.11 |
+| 409 con code token_from_env | `PUT` o `DELETE /api/alerts/token` con el token definido por CENTINELA_TELEGRAM_TOKEN | 19.6, 13.3 |
+| 409 con alerts_disabled_by_env | Prueba o búsqueda de chats con CENTINELA_ALERTS_DISABLED activa | 19.7, 13.3 |
+| 429 “Espera unos segundos antes de repetir esta acción” o “Ya hay una acción de alertas en curso…” (Retry-After) | Prueba y búsqueda de chats de Alertas | 19.2, 13.3 |
+| 403 “Solo un administrador puede configurar las alertas” | `/api/alerts*` con un rol que no es administrador | 19, 13.3 |
+| “AVISO: sin autenticación, cualquier equipo de la red puede configurar las alertas de Telegram” | Consola del servidor al arrancar con CENTINELA_AUTH=off y escuchando fuera de loopback | 19.8 |

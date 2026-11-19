@@ -5,7 +5,20 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). V
 
 ## [Sin publicar]
 
+## [2.3.0] - 2026-11-19
+
 ### Agregado
+- **Alertas por Telegram** (opcionales, desactivadas por defecto). Los administradores pueden recibir un mensaje de Telegram cuando un servicio cae, se recupera y, si lo activan, queda DEGRADADO.
+  - Se configuran en Ajustes → Alertas, con un panel de ayuda «Cómo configurarlo» (crear el bot con @BotFather, guardar el token, «Buscar mis chats», «Enviar mensaje de prueba» y activar), ayuda por campo y mensajes de error que explican la causa y la solución.
+  - Nivel de detalle Mínimo o Completo (con dirección, motivo y hora; la dirección se envía sin usuario, contraseña ni parámetros), aviso tras N fallos seguidos (1 a 10, por defecto 2), aviso de recuperaciones y de DEGRADADO.
+  - Antirruido: los avisos del mismo chat en una ventana de 30 s se agrupan en un mensaje, no se repiten las caídas ya avisadas tras reiniciar el servidor (la recuperación pendiente sí se avisa) y la recuperación solo se avisa si antes se avisó la caída.
+  - Indicador de estado (Sin configurar, Desactivadas, Funcionando, Con errores, Bloqueadas por el entorno) con último envío, último error y contadores.
+  - Variable `CENTINELA_TELEGRAM_TOKEN` para definir el token fuera del panel (tiene prioridad) y `CENTINELA_ALERTS_DISABLED` para bloquear la función. Ambas vacías por defecto; con ellas vacías y sin activar las alertas, el comportamiento es el de la 2.2.x. `compose.yml` las pasa desde `.env`.
+  - Rutas nuevas `/api/alerts*`, solo para administradores.
+  - Mensajes de error específicos cuando el chat de destino es un bot (por ejemplo, el propio bot) o la persona aún no inició el chat con él. Al guardar otro chat de destino, las caídas que siguen activas se vuelven a avisar en el chat nuevo; si se prueba un chat sin guardarlo, el panel recuerda pulsar «Guardar».
+  - Requiere salida HTTPS del servidor a `api.telegram.org`, puerto 443; no hay soporte de proxy en esta versión.
+  - Documentación: nuevo capítulo «Alertas por Telegram» en el manual y en la guía de uso, y sección en la guía de despliegue seguro. Los PDF se regeneran con las capturas.
+- Documentación: paso a paso para crear y arrancar el contenedor de Centinela en Linux (Podman o Docker, sección 14.7) y en Windows (Docker Desktop o Podman Desktop, sección 14.8), con instalación del motor, archivo `.env`, firewall, arranque automático, actualización y desinstalación, y nuevas filas en los problemas frecuentes. Los pasos de Windows y de Docker en Linux se basan en la documentación de cada producto y no se probaron con Centinela.
 - Guía de uso en PDF (`docs/Centinela-Guia-de-uso.pdf`, 45 páginas) para quien usa el panel. Explica cada función paso a paso: ventanas, objetivos, organizaciones, ajustes, usuarios y roles, tareas frecuentes y mensajes comunes. Su fuente es `docs/manual/guia-uso.md`.
 
 ### Corregido
@@ -13,6 +26,13 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). V
 - **Traceroute:** después de cambiar el servicio de la ventana «Análisis de ruta (traceroute)», «Ejecutar» no mostraba nada hasta recargar la página, porque trazaba el servicio anterior. Ahora traza el servicio elegido. La causa estaba en cómo cada ventana guardaba su contexto, así que la corrección vale para todas.
 - El aviso del panel y la ventana de cambio obligatorio ya no hablan de una «contraseña por defecto», que no existe desde la 2.0.0. Ahora indican que la contraseña es temporal: la inicial o una asignada por un administrador.
 - Manuales: nuevas capturas de la sección Objetivos y de su formulario, con la barra de organizaciones, la casilla «Identificarse como un navegador» y los campos de conexión cifrada (TLS) y huella.
+
+### Seguridad
+- Alertas por Telegram: el token del bot nunca se devuelve por la API ni se escribe en el registro, y todo mensaje de error lo oculta. Se recomienda definirlo con `CENTINELA_TELEGRAM_TOKEN` en el archivo `.env` (permiso 600, fuera del repositorio); si se guarda desde el panel queda en `data/alerts.json` (permiso 600).
+- La conexión con Telegram valida el certificado TLS y no sigue redirecciones.
+- Las rutas `/api/alerts*` solo admiten administradores; la prueba y la búsqueda de chats se limitan a una acción a la vez y una cada 5 s por administrador.
+- `CENTINELA_ALERTS_DISABLED=1` bloquea la función por completo. Con `CENTINELA_AUTH=off` y el servidor abierto a la red, el arranque avisa de que cualquier equipo puede configurar las alertas.
+- Los avisos salen de la red local hacia los servidores de Telegram (los chats con bots no tienen cifrado de extremo a extremo); la guía de despliegue seguro explica qué datos salen.
 
 ## [2.2.0] - 2026-11-18
 

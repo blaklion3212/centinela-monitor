@@ -24,6 +24,11 @@ services:
       CENTINELA_ALLOWED_HOSTS: ${CENTINELA_ALLOWED_HOSTS:-}
       # IPs de proxies inversos de confianza (sin CIDR). Vacío = se ignora X-Forwarded-For.
       CENTINELA_TRUST_PROXY: ${CENTINELA_TRUST_PROXY:-}
+      # Alertas por Telegram (opcionales; se configuran en Ajustes > Alertas). El token es un secreto: mejor definirlo
+      # en el .env que guardarlo en el panel (el .env debe tener permisos 600: chmod 600 .env). Si se define aquí, tiene prioridad sobre el del panel.
+      CENTINELA_TELEGRAM_TOKEN: ${CENTINELA_TELEGRAM_TOKEN:-}
+      # 1 o true bloquea la función de alertas por completo (no se envía nada). Vacío = permitida.
+      CENTINELA_ALERTS_DISABLED: ${CENTINELA_ALERTS_DISABLED:-}
       CENTINELA_CONCURRENCY: "16"      # mediciones simultáneas (2 a 64)
       TZ: America/Mexico_City
     volumes:

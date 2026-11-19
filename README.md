@@ -18,7 +18,17 @@ El modo real pide **usuario y contraseña**. La primera vez crea el administrado
 ```
 docker compose up -d --build      # o: podman-compose up -d --build
 ```
-Define `CENTINELA_ADMIN_PASSWORD` (mín. 8 caracteres) en un archivo `.env` junto a `compose.yml`; si no, la contraseña inicial aleatoria aparece en `docker logs centinela` / `podman logs centinela`. Abre `http://IP-DEL-SERVIDOR:9595` (puerto 9595 publicado en todas las interfaces; los datos van en el volumen `centinela-data`). Archivos: `Dockerfile`, `compose.yml`, `.dockerignore`. Dentro del contenedor `127.0.0.1` es el propio contenedor; para métricas de un servidor instala el agente en él. Detalles en el manual (capítulo 14).
+Define `CENTINELA_ADMIN_PASSWORD` (mín. 8 caracteres) en un archivo `.env` junto a `compose.yml`; si no, la contraseña inicial aleatoria aparece en `docker logs centinela` / `podman logs centinela`. Abre `http://IP-DEL-SERVIDOR:9595` (puerto 9595 publicado en todas las interfaces; los datos van en el volumen `centinela-data`). Archivos: `Dockerfile`, `compose.yml`, `.dockerignore`. Dentro del contenedor `127.0.0.1` es el propio contenedor; para métricas de un servidor instala el agente en él. Detalles en el manual (capítulo 14). Paso a paso completo, desde instalar el motor hasta abrir el panel: sección 14.7 (Linux) y sección 14.8 (Windows; basada en la documentación de Docker y Podman, Centinela se probó en Linux).
+
+## Alertas por Telegram (opcionales)
+Centinela puede avisar por Telegram cuando un servicio **cae**, se **recupera** y, si lo activas, queda **DEGRADADO**. Es **opcional y viene desactivada**: solo los administradores la configuran, en *Ajustes → Alertas*, con un panel de ayuda «Cómo configurarlo» (crear el bot con @BotFather, guardar el token, buscar el chat, enviar un mensaje de prueba y activar). Antirruido: avisa tras N fallos seguidos (2 por defecto), agrupa los avisos en ventanas de 30 s, no repite caídas ya avisadas tras reiniciar y avisa la recuperación. El servidor necesita salida HTTPS a `api.telegram.org:443` (sin proxy en la 2.3.0). Los avisos salen de tu red y pasan por los servidores de Telegram, sin cifrado de extremo a extremo.
+
+| Variable | Qué hace | Por defecto |
+|---|---|---|
+| `CENTINELA_TELEGRAM_TOKEN` | Token del bot. Tiene prioridad sobre el guardado en el panel (que queda bloqueado). Es un secreto: en contenedor ponlo en `.env` con `chmod 600 .env`, fuera del repositorio. | vacía |
+| `CENTINELA_ALERTS_DISABLED` | `1` o `true` bloquea la función por completo (no se envía nada, ni pruebas ni búsqueda de chats). | vacía (permitida) |
+
+Con ambas vacías el comportamiento es el de la 2.2.x. Guía completa, grupos y canales, privacidad y problemas frecuentes: [capítulo 19 del manual](docs/manual/manual.md#19-alertas-por-telegram) y [Despliegue seguro](docs/despliegue-seguro.md#alertas-por-telegram).
 
 ## Estados
 - **UP**: todo dentro de lo esperado.
@@ -40,7 +50,7 @@ js/widgets/           Una ventana por tipo (se registran en registry.js)
 js/views/             Panel, Objetivos, Ajustes y barra de organizaciones (orgs.js)
 server/               API, planificador y sondas (ping, dns, http, tls, tcp, traceroute)
 agent/                Agente para medir CPU/RAM/disco/servicios de servidores remotos
-data/                 targets.json, settings.json, layout.json, orgs.json, users.json y orgs/<id>/ (se crean al primer arranque)
+data/                 targets.json, settings.json, layout.json, orgs.json, users.json y orgs/<id>/ (se crean al primer arranque); alerts.json al configurar las alertas por Telegram
 ```
 
 ## Organizaciones (varios clientes o sedes)

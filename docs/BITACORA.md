@@ -665,4 +665,67 @@ Resultado de las comprobaciones:
 
 **Pendientes**
 - [ ] Alertas por Telegram: retomar cuando el usuario lo indique. Antes hay que resolver las tres decisiones de la propuesta.
-- [ ] Contenedor de revisión `centinela-revision`: eliminarlo sin dejar rastro cuando el usuario lo confirme.
+- [x] Contenedor de revisión `centinela-revision`: eliminado (2026-11-19).
+
+---
+
+## 2026-11-19 · Contenedor eliminado y plan de alertas
+
+**Contenedor ✅**
+- Con la confirmación del usuario se eliminaron el contenedor, el pod, el volumen, la red, la imagen `centinela-monitor` con sus capas intermedias y la imagen base `node:22-bookworm-slim`.
+- Verificado contra el estado inicial: 0 contenedores, pods y volúmenes; solo la red `podman`; el puerto 9595 libre.
+- Queda una imagen `docker.io/library/ubuntu`, descargada el 2026-11-19 a las 10:03, después de crear el contenedor y fuera de esta sesión. Se conservó.
+
+**Plan de alertas**
+- El usuario pidió un plan para las alertas con dos condiciones:
+  - La función es **opcional**: viene desactivada y la habilita un administrador.
+  - Incluye **ayuda** para configurarla.
+- El plan está en `docs/plan-alertas.md`: comportamiento, ayuda integrada, arquitectura, 10 fases, decisiones pendientes, criterios de aceptación y riesgos.
+- **Estado:** pendiente de aprobación y de las 4 decisiones de la fase 0. No hay código.
+
+---
+
+## 2026-11-19 · Fase 5: alertas opcionales por Telegram (objetivo: 2.3.0)
+
+**Decisiones del usuario**
+- La función es **opcional**: viene desactivada y la activa un administrador. Incluye ayuda integrada.
+- Salida directa a Internet, sin proxy.
+- **Un solo chat**, con el diseño preparado para un chat por organización: todo destino pasa por `chatFor(orgId)`.
+- El token se puede escribir en el panel o en `CENTINELA_TELEGRAM_TOKEN`; si están los dos, manda la variable.
+- Detalle mínimo por defecto, con la etiqueta del cliente. La organización principal (Host) no lleva etiqueta.
+- **Chat siempre coherente:** `alerted` se guarda en `data/alerts.json`. Tras un reinicio no se repiten caídas ya avisadas y sí se avisa la recuperación pendiente.
+- **Restricciones nuevas:**
+  - Ya no quedan minutos de GitHub Actions: toda la validación se hace en local, con Node 18–24 en podman y la construcción de la imagen. Los commits llevan `[skip ci]`.
+  - `CLAUDE.md` y `.claude/` se retiraron de GitHub; se conservan solo en local y están en `.gitignore`. También se retiró `samples/` del repo MementoTraceLog.
+  - Los commits nuevos van sin la línea de coautoría.
+
+**Hecho**
+- **Fase 1:** requisitos en `docs/requisitos/alertas.md` (RA-01 a RA-98). Los datos de la Bot API se confirmaron con fuentes oficiales (anexo A).
+- **Fase 2:** arquitectura en `docs/requisitos/arquitectura-alertas.md`.
+- **Fases 3 y 4:**
+  - `server/lib/alerts-config.js`, `server/lib/channels/telegram.js` y `server/lib/notify.js`.
+  - Rutas `/api/alerts*`, solo para administradores, con `deniedMsg`.
+  - Vista `js/views/alerts.js` en Ajustes; `compose.yml` con las variables nuevas.
+- **Fase 5:** 375 pruebas nuevas, con un simulador de Telegram, reloj falso y un DOM mínimo. Encontraron 7 defectos y se corrigieron todos.
+- **Fase 6:** `revisor-qa` (QA-A1 a QA-A12) y `auditor-seguridad` (SEC-A1 a SEC-A14). Sin hallazgos críticos ni altos; se corrigieron todos los medios y bajos. Los principales:
+  - Credenciales de las URL en modo Completo.
+  - Inyección de líneas en los avisos.
+  - El 429 ahora se atiende por chat.
+  - El guardado diferido de `alerted`.
+  - El endurecimiento del formato del token.
+- **Fase 7:**
+  - Capítulo 19 del manual y capítulo 11 de la guía, más README, despliegue seguro y CHANGELOG.
+  - Capturas `alertas-01.jpg` y `alertas-02.jpg`. Los mensajes de Telegram se muestran como texto de ejemplo, porque no hay bot real.
+  - PDF regenerados.
+- **Validación local:** 777/777 en Node 18, 20, 22 y 24, con openssl y usuario sin privilegios. La imagen se construye y responde en `/api/health`. Podman quedó como estaba.
+  - Se corrigió una prueba intermitente: el puerto «cerrado» efímero ahora es el puerto 1 fijo.
+
+**Hecho también**
+- Paso a paso del contenedor en Linux y Windows (manual, secciones 14.7 y 14.8).
+
+**Pendientes**
+- [x] Regenerar los PDF con el capítulo 14 ampliado.
+- [x] Fase 8: prueba del usuario con un bot real. Salieron dos ajustes: un 403 explicado por su causa (destino = el propio bot) y que al cambiar el chat se vuelvan a avisar las caídas vigentes. Aviso de caída y de recuperación recibidos; contenedor eliminado sin rastro.
+- [x] Fase 9: versión 2.3.0 aprobada por el usuario; commit, etiqueta `v2.3.0` y push con `[skip ci]`.
+
+**Observación del usuario (pendiente de decidir):** el aviso de recuperación tarda en llegar tras corregir el objetivo. La causa es el intervalo de comprobación más la ventana de agrupación de 30 s; se le ofrece hacer configurable esa ventana en una versión futura.

@@ -17,6 +17,19 @@ var validate = require('./validate');
 
 var DATA_DIR = process.env.CENTINELA_DATA || path.join(__dirname, '..', '..', 'data');
 
+// Si el directorio de datos existe con permisos de grupo u otros, intenta dejarlo en 0700; si no puede, avisa en el log.
+function secureDataDir() {
+  if (process.platform === 'win32') return 'skip';
+  var st;
+  try { st = fs.statSync(DATA_DIR); } catch (e) { return 'absent'; }
+  if (!st.isDirectory() || (st.mode & 0o077) === 0) return 'ok';
+  try { fs.chmodSync(DATA_DIR, 0o700); return 'fixed'; }
+  catch (e) {
+    console.warn('AVISO: el directorio de datos tiene permisos de grupo u otros y no se pudo restringir a 0700: ' + DATA_DIR);
+    return 'failed';
+  }
+}
+
 function file(name) { return path.join(DATA_DIR, name); }
 
 function read(name) {
@@ -71,6 +84,7 @@ function cleanOrg(o, id) {
 function newOrgId() { return 'o' + crypto.randomBytes(4).toString('hex'); }
 
 function load() {
+  secureDataDir();
   var settings = JSON.parse(JSON.stringify(Defaults.SETTINGS));
   var s = read('settings.json');
   if (s.exists) {
@@ -195,4 +209,4 @@ function load() {
   };
 }
 
-module.exports = { load: load, sanitizeLayout: sanitizeLayout, DEFAULT_ORG: DEFAULT_ORG, read: read, write: write, DATA_DIR: DATA_DIR };
+module.exports = { load: load, sanitizeLayout: sanitizeLayout, DEFAULT_ORG: DEFAULT_ORG, read: read, write: write, DATA_DIR: DATA_DIR, secureDataDir: secureDataDir };

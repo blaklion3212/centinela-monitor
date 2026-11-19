@@ -19,6 +19,8 @@ Servidor (`server/`):
 | `CENTINELA_CONCURRENCY` | Mediciones simultáneas de todas las organizaciones (2 a 64). | `16` |
 | `CENTINELA_CHECK_TIMEOUT_MS` | Plazo global de cada verificación (mínimo 5000). Si se excede, el objetivo queda DOWN con el motivo «La verificación excedió el tiempo máximo»; «verificar ahora» responde 200 con ese resultado, nunca 504. Una sonda que no termina se considera huérfana y se libera como máximo a los 2 × este plazo (ver «Verificaciones colgadas»). | `120000` (ms) |
 | `CENTINELA_TRUST_PROXY` | Lista, separada por comas, de IP de proxies inversos de confianza (sin CIDR). Solo para peticiones que llegan desde una de esas IP se lee `X-Forwarded-For` para saber la IP real del cliente. Ver «Proxy de confianza». | vacía: `X-Forwarded-For` se ignora |
+| `CENTINELA_TELEGRAM_TOKEN` | Token del bot de las alertas por Telegram (opcional). Tiene prioridad sobre el guardado en el panel. Es un secreto: ver «Alertas por Telegram». `compose.yml` la pasa desde `.env`. | vacía: el token se gestiona desde Ajustes → Alertas |
+| `CENTINELA_ALERTS_DISABLED` | `1` o `true` bloquea la función de alertas por completo: no se envía nada, ni pruebas ni búsqueda de chats. Hay que reiniciar. | vacía: permitida |
 | `TZ` | Zona horaria del proceso (no la lee el código: la aplica el sistema; en el contenedor se fija en `compose.yml`). | la del sistema (`America/Mexico_City` en `compose.yml`) |
 
 Agente (`agent/`):
@@ -110,6 +112,27 @@ En la lista pon la IP con la que **Centinela ve al proxy** (la dirección de ori
 
 > **Contenedor:** `compose.yml` ya pasa `CENTINELA_TRUST_PROXY` al contenedor; defínela en `.env`. Pon la IP con la que Centinela ve al proxy (el origen de la conexión), que dentro de un contenedor no suele ser 127.0.0.1.
 
+## Alertas por Telegram
+
+Las alertas por Telegram son **opcionales y vienen desactivadas**: con `CENTINELA_TELEGRAM_TOKEN` y `CENTINELA_ALERTS_DISABLED` vacías y sin activarlas en Ajustes → Alertas, Centinela no abre ninguna conexión hacia Telegram. Si las usas:
+
+1. **El token es un secreto.** Quien lo tenga controla el bot. Defínelo con `CENTINELA_TELEGRAM_TOKEN` en el archivo `.env` junto a `compose.yml`, con permisos `600` (`chmod 600 .env`) y **fuera del repositorio** (no lo subas ni lo copies a documentos, tickets o capturas). Tiene prioridad sobre el que se pegue en el panel y deja ese campo bloqueado. Si lo guardas desde el panel, queda en texto plano en `data/alerts.json` (permiso `0600`), que entonces forma parte de lo que debes proteger en los respaldos. El panel y la API nunca lo devuelven, y el servidor no lo escribe en el log.
+
+   ```
+   # .env  (chmod 600 .env)
+   CENTINELA_TELEGRAM_TOKEN=123456789:AAAA…pega-aquí-tu-token-completo
+   ```
+
+   Si se filtra, rótalo con `/token` en @BotFather y actualiza `.env` (y recrea el contenedor con `docker compose up -d`).
+2. **Salida a Internet mínima.** El servidor solo necesita HTTPS de salida hacia `api.telegram.org`, puerto 443; no hace falta abrir ningún puerto de entrada. Si tu firewall filtra la salida, permite solo ese destino para el equipo o el contenedor de Centinela. La conexión valida el certificado TLS y no sigue redirecciones.
+3. **Sin proxy en la 2.3.0.** La salida es directa: no se usa ningún proxy HTTP/HTTPS. Si el equipo solo sale a Internet por un proxy, las alertas no funcionarán (el panel mostrará «No hay conexión con api.telegram.org…»).
+4. **No actives las alertas con `CENTINELA_AUTH=off` en una red compartida.** Sin inicio de sesión, cualquier equipo que llegue al panel puede ver y cambiar la configuración de alertas (chat, activación, pruebas). Si el servidor escucha fuera de loopback, el arranque lo avisa: «AVISO: sin autenticación, cualquier equipo de la red puede configurar las alertas de Telegram».
+5. **Bloquear la función.** Para impedir que se use aunque alguien tenga el token, define `CENTINELA_ALERTS_DISABLED=1` (o `true`) y reinicia. No se envían avisos, mensajes de prueba ni búsquedas de chats; la sección Alertas muestra el bloqueo y la configuración guardada se conserva. Quita la variable y reinicia para volver a permitirla.
+6. **Privacidad de los avisos.** Cada aviso sale de la red con el nombre del servicio y de su organización y el estado; en el nivel «Completo», también la dirección (sin usuario, contraseña ni parámetros), el motivo y la hora. Pasa por los servidores de Telegram y los chats con bots no tienen cifrado de extremo a extremo: usa un grupo privado con las personas necesarias.
+7. **Quién puede configurarlas.** Solo los administradores (rutas `/api/alerts*`); las pruebas y la búsqueda de chats se limitan a una acción a la vez y una cada 5 s por administrador. Cada cambio queda en el log como línea `[alertas] …` con el usuario, sin valores secretos.
+
+Más detalle y problemas frecuentes: capítulo 19 del manual.
+
 ## TLS del agente
 
 El agente puede escuchar por HTTPS. Con TLS el token y las métricas viajan cifrados, y la **huella SHA-256 del certificado**, fijada en el objetivo, garantiza que el panel habla con el agente correcto: si la huella no coincide, el panel **no envía el token**.
@@ -149,7 +172,7 @@ El agente puede escuchar por HTTPS. Con TLS el token y las métricas viajan cifr
 - **Endurecimiento aplicado** en `compose.yml`: `cap_drop: ALL` con solo `NET_RAW` (necesario: comprobado en laboratorio, sin él el ping falla por el `setcap` del binario; sirve también para traceroute), `no-new-privileges`, sistema de archivos de solo lectura con `tmpfs` en `/tmp`, usuario sin privilegios (`node`), límites de memoria (512 MB) y de procesos (256), y comprobación de salud.
 - **Reiniciar y arrancar con el equipo (Podman):** ver «Podman: reinicio y arranque con el equipo» más abajo.
 - **ICMP sin privilegios:** `net.ipv4.ping_group_range: "0 65535"`. Se usa 65535 (y no 2147483647) para que también funcione con podman rootless.
-- **`.env`:** crea un archivo `.env` junto a `compose.yml` con `CENTINELA_ADMIN_PASSWORD=...` (mín. 8 caracteres). Añade también `CENTINELA_ALLOWED_HOSTS=...` (ver arriba). Protégelo (`chmod 600 .env`) y no lo subas a ningún repositorio.
+- **`.env`:** crea un archivo `.env` junto a `compose.yml` con `CENTINELA_ADMIN_PASSWORD=...` (mín. 8 caracteres). Añade también `CENTINELA_ALLOWED_HOSTS=...` (ver arriba). Protégelo (`chmod 600 .env`) y no lo subas a ningún repositorio. Si usas las alertas por Telegram, define ahí también `CENTINELA_TELEGRAM_TOKEN` (sección «Alertas por Telegram»).
 
 ## Podman: reinicio y arranque con el equipo
 
@@ -170,7 +193,7 @@ Comprobado en laboratorio con Podman sin root en el equipo de pruebas (no es un 
 
 ## Respaldo de `data/`
 
-Respalda periódicamente la carpeta de datos (o el volumen `centinela-data`) con el servidor detenido o desde una copia consistente. Contiene los hashes de contraseña de los usuarios, así que trata el respaldo como secreto. El servidor crea las carpetas con permisos `0700` y los archivos con `0600`; conserva esos permisos al restaurar. Para recuperar el acceso sin respaldo, borra `data/users.json` y reinicia (se crea de nuevo el administrador).
+Respalda periódicamente la carpeta de datos (o el volumen `centinela-data`) con el servidor detenido o desde una copia consistente. Contiene los hashes de contraseña de los usuarios y, si guardaste el token de Telegram desde el panel, ese token en `alerts.json`, así que trata el respaldo como secreto. El servidor crea las carpetas con permisos `0700` y los archivos con `0600`; conserva esos permisos al restaurar. Para recuperar el acceso sin respaldo, borra `data/users.json` y reinicia (se crea de nuevo el administrador).
 
 ## Límites de seguridad
 

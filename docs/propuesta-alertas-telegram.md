@@ -1,6 +1,6 @@
 # Propuesta: alertas por Telegram
 
-**Estado:** en espera. Solo análisis, sin implementar. El usuario retomará el tema después de más pruebas.
+**Estado:** en espera. Solo análisis, sin implementar. Plan de trabajo en [plan-alertas.md](plan-alertas.md).
 **Fecha:** 2026-11-18
 **Versión estimada:** 2.3.0 (MINOR: funcionalidad nueva y compatible).
 

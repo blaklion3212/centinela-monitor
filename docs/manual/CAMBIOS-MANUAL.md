@@ -90,6 +90,33 @@ Se añade `docs/manual/guia-uso.md`, una guía de uso separada del manual técni
 - Contenido: primeros pasos, conceptos, Panel, catálogo de las 14 ventanas, Objetivos, Organizaciones, Ajustes, Usuarios y roles, recetas, preguntas frecuentes y dos anexos (glosario y matriz de roles). No incluye instalación, contenedor, variables de entorno ni API.
 - Imágenes: reutiliza las de `docs/manual/img/` sin modificarlas. Las capturas `p15-fig-007` (Objetivos) y `p16-fig-008` (formulario) se usan con una nota en el pie porque son anteriores a la barra de organizaciones y a los campos de navegador, TLS y huella. No se usan `p05-fig-001`, `p11-fig-002` (anteriores a la barra de organizaciones), `p16-fig-009` (parte del agente sin TLS) ni `p40-fig-030` (solo muestra el estado vacío de Servicios del sistema). Tampoco se usan `p32-fig-019`, `p34-fig-021` y `p39-fig-029`, porque otras capturas cubren esas ventanas o la guía las describe solo con texto.
 
+## Alertas por Telegram (versión 2.3.0, 19 de noviembre de 2026)
+
+Capítulo nuevo en `manual.md` y en `guia-uso.md`. Los metadatos de versión de ambos documentos no cambian: los fija el usuario al aprobar el release. Fuente de verdad: el código (archivo entre paréntesis). Las capturas están pendientes: los marcadores `alertas-01.jpg` y `alertas-02.jpg` apuntan a `docs/manual/img/` (todavía no existen; hasta que se agreguen, el generador de PDF se detiene con “no se encuentra la imagen”). Los mensajes de Telegram se muestran como ejemplo en texto, sin captura.
+
+| Documento y sección | Qué cambió | Por qué (fuente) |
+|---|---|---|
+| manual.md, capítulo 19 (nuevo, subsecciones 19.1 a 19.12) | Qué es y qué necesita, pasos con @BotFather, grupos, canales y bot dedicado, opciones, formato y reglas antirruido (N fallos, agrupación de 30 s, reinicios), token por entorno y `.env`, bloqueo, privacidad, rotación del token, estado y tabla de problemas frecuentes. Se numera 19 para no renumerar los capítulos y referencias existentes. | `js/views/alerts.js`, `server/lib/notify.js`, `server/lib/alerts-config.js`, `server/lib/channels/telegram.js`, `server/server.js`. |
+| manual.md, 2.3 y 14.2 | Variables `CENTINELA_TELEGRAM_TOKEN` y `CENTINELA_ALERTS_DISABLED`. | `server/server.js`, `compose.yml`. |
+| manual.md, 8.3 (nueva) | Remite al capítulo 19. La antigua 8.3 “Conexión y datos de demostración” pasa a ser 8.4. | `js/views/settings.js`. |
+| manual.md, 12, 13.1, 13.3 | Fila de seguridad de las alertas; archivo `alerts.json`; rutas `/api/alerts*` (solo administradores, 400, 409, 429). | `server/server.js`, `server/lib/alerts-config.js`. |
+| manual.md, 16, 17, 18 | Fila de solución de problemas; la limitación “Sin notificaciones externas” ya no es cierta y se reescribe (Telegram opcional y sus límites); términos nuevos (bot, token del bot, chat de destino, BotFather). | Código citado arriba. |
+| manual.md, Anexos C y D | Variables nuevas y mensajes y códigos de las alertas. | Código citado arriba. |
+| guia-uso.md, capítulo 11 (nuevo) | Versión breve para el administrador que lo configura: pasos, opciones, formato de avisos, estado y privacidad, y tabla de mensajes. Más 7.4 (remite al capítulo 11; la antigua 7.4 pasa a 7.5), fila en la matriz de roles, términos nuevos, la pregunta frecuente sobre correos y mensajes, y la tabla “Cómo leer esta guía”. | Código citado arriba. |
+
+## Paso a paso del contenedor (versión 2.3.0)
+
+Solo documentación; sin cambios de código ni de `compose.yml`. No se renumeró nada: las secciones 14.1 a 14.6 conservan su número y se añaden dos al final.
+
+| Documento y sección | Qué cambió | Por qué (fuente) |
+|---|---|---|
+| manual.md, 14.1 | Consejo final que remite a 14.7 y 14.8. | Navegación. |
+| manual.md, 14.6 | Siete filas nuevas: comando no reconocido, WSL2 o virtualización, puerto en uso, permiso en el socket de Docker, `.env` no leído, proveedor de compose o máquina de Podman. | Documentación de Docker y Podman; no verificadas en Windows. |
+| manual.md, 14.7 (nueva) | Paso a paso en Linux: requisitos, obtener el proyecto, instalar Podman o Docker (Debian/Ubuntu y RHEL/Rocky/Alma), `.env`, construir, firewall, arranque automático, comprobación, mantenimiento y desinstalación. | `compose.yml`, `Dockerfile`, secciones 14.1 a 14.5. Solo se probó Podman sin root en Linux. |
+| manual.md, 14.8 (nueva) | Paso a paso en Windows con Docker Desktop o Podman Desktop, con la nota de que no se probó. | Documentación de Docker, Podman y Microsoft; no probado. |
+| guia-uso.md, “Antes de empezar” | Una frase que remite al capítulo 14 del manual. | La guía no duplica la instalación. |
+| README.md, Contenedor | Línea que remite a 14.7 y 14.8. | Navegación. |
+
 ## Secciones sin cambios de contenido
 
 Capítulos 3 (excepto 3.2 y 3.5), 5, 7, 10 (excepto los dos puntos indicados), 15 (excepto 15.10), Anexos A y B y el resto de las secciones 2, 6 y 8 se transcribieron del PDF. Solo hubo adaptaciones de formato: las celdas con una barra vertical se reescribieron con “o”, la nota “Cuidado” del capítulo 11 pasó a `> **Importante:**` (el generador solo admite Nota, Importante y Consejo) y las tablas de clave-valor del catálogo llevan una fila de cabecera (“Aspecto | Detalle”).

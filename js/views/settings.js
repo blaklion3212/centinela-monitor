@@ -31,8 +31,15 @@
         '<li>Copia la carpeta <code>agent/</code> al servidor (solo necesita Node 18+).</li><li>Ejecuta <code>CENTINELA_AGENT_TOKEN=UN_SECRETO_LARGO node agent.js --port 9100 --host IP_DEL_SERVIDOR</code>.</li>' +
         '<li>Opcional, recomendado fuera de la red local: cifra con TLS añadiendo <code>--tls-cert</code> y <code>--tls-key</code>; el agente imprime la huella SHA-256 del certificado al arrancar y, con TLS, esa huella es obligatoria en el objetivo.</li>' +
         '<li>Abre el puerto solo para la IP de este panel.</li><li>Edita el objetivo, activa “Salud del servidor” y pon el mismo puerto y token. Con TLS, marca “Conexión cifrada” y pega la huella (obligatoria); si la cambias después, hay que volver a escribir el token.</li></ol></div></div>' +
-      '</div></div>';
+      '</div></div>' +
+      // Alertas por Telegram: solo administradores (RA-60); sin servidor solo se avisa (RA-66).
+      (NOC.auth.can('users') ? '<section class="panel" id="alerts-panel" style="margin-top:14px"></section>' : '');
 
+    var alertsEl = root.querySelector('#alerts-panel');
+    if (alertsEl) {
+      if (live && NOC.alertsPanel) NOC.alertsPanel.mount(alertsEl);
+      else alertsEl.innerHTML = '<div class="panel-head"><h2>Alertas</h2></div><div class="panel-body"><p class="muted" data-alerts-demo>Disponible solo con el servidor.</p></div>';
+    }
     var form = root.querySelector('#sf');
     root.onclick = function (e) {
       var tb = e.target.closest('[data-theme]');

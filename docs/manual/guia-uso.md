@@ -1,15 +1,15 @@
 ---
 title: Guía de uso
 subtitle: Cómo usar el panel de monitoreo, función por función
-version: 2.2.0
-date: 18 de noviembre de 2026
+version: 2.3.0
+date: 19 de noviembre de 2026
 ---
 
 # Antes de empezar
 
 Esta guía explica cómo usar el panel de Centinela en el día a día. Está escrita para quien lo consulta u opera (Lectores y Operadores) y para los administradores en lo que toca a la pantalla: crear usuarios, organizaciones o ajustes. Cada función se describe con lo mismo: qué es, para qué sirve, cómo se usa paso a paso y qué significan sus colores y estados.
 
-No trata la instalación, el contenedor, las variables de entorno ni la API. Para eso consulta el "Manual de usuario y configuración".
+No trata la instalación, el contenedor, las variables de entorno ni la API (salvo lo mínimo para los avisos por Telegram, capítulo 11). Para eso consulta el "Manual de usuario y configuración"; para instalar Centinela en un contenedor, su capítulo 14 trae el paso a paso en Linux y en Windows.
 
 ## Cómo leer esta guía
 
@@ -17,7 +17,7 @@ No trata la instalación, el contenedor, las variables de entorno ni la API. Par
 |---|---|
 | Lector (solo consultas) | Capítulos 1, 2, 3 y 4. Después, el capítulo 10 cuando algo no salga como esperas. |
 | Operador (das de alta servicios) | Todo, en especial los capítulos 5, 6, 7 y 9. |
-| Administrador | Todo, y el capítulo 8 para gestionar personas. |
+| Administrador | Todo, el capítulo 8 para gestionar personas y el capítulo 11 para configurar los avisos por Telegram. |
 
 > **Nota:** las capturas de pantalla son ilustrativas. Muchas se tomaron en modo demostración (con datos simulados) o con fechas anteriores; los nombres de servicios y las cifras de tu panel serán distintos.
 
@@ -615,7 +615,11 @@ Cada fila tiene dos casillas: **Degradado** (aviso, ámbar) y **Crítico** (rojo
 
 El intervalo y los puntos de historial, en cambio, se ajustan solos al límite permitido.
 
-## 7.4 Conexión y servidores remotos
+## 7.4 Alertas por Telegram (solo administradores)
+
+Los administradores ven, debajo de los ajustes, la sección **Alertas** para recibir avisos por Telegram cuando un servicio cae o se recupera. Viene desactivada; su configuración se explica en el capítulo 11.
+
+## 7.5 Conexión y servidores remotos
 
 - **Conexión:** dice si estás **En vivo** (con el nombre del servidor de monitoreo) o en **Demostración**. En demostración aparece el botón **Borrar datos de demostración**, que borra lo guardado en tu navegador y recarga; no afecta a un servidor real. El detalle del equipo servidor solo lo ven los administradores.
 - **Cómo medir servidores remotos:** es una ayuda con los pasos para instalar el agente. Para ti, como usuario, significa: *si quieres ver CPU, RAM, disco o servicios de un servidor remoto, alguien con acceso a ese servidor debe instalar el agente, abrirle un puerto solo para el panel y darte el puerto, el token y, si usa conexión cifrada, la huella del certificado*. Tú solo completas esos datos en la parte "Salud del servidor" del objetivo (sección 5.2). Los comandos y su explicación están en el capítulo 11 del "Manual de usuario y configuración".
@@ -777,7 +781,7 @@ Revisa que la insignia diga **En vivo**. Alguien deberá volver a iniciar sesió
 | ¿Por qué no veo la sección Usuarios, o los botones de editar? | Tu rol es Operador o Lector. Pídele a un administrador que cambie tu rol si lo necesitas. |
 | ¿Se pierden mis datos al recargar la página? | No. Tu configuración y disposición se guardan. Solo se reinician las gráficas si se reinicia el servidor. |
 | ¿Dónde se mide? | Desde el equipo del servidor de monitoreo, no desde tu navegador: la latencia que ves es la de ese equipo hacia el objetivo. |
-| ¿Envía correos o mensajes cuando algo cae? | No. Las alertas son visuales: colores, insignias, eventos y el título de la pestaña. |
+| ¿Envía correos o mensajes cuando algo cae? | Por defecto no: las alertas son visuales (colores, insignias, eventos y el título de la pestaña). Un administrador puede activar avisos por Telegram (capítulo 11); correo y SMS no existen. |
 | ¿Los umbrales son por servicio? | No, son globales y valen para todos los objetivos y organizaciones. |
 | ¿Puedo ver solo una organización? | No se restringe por rol: quien entra ve todas. |
 
@@ -808,6 +812,89 @@ Revisa que la insignia diga **En vivo**. Alguien deberá volver a iniciar sesió
 | Sin I/O wait ni ancho de banda | El servidor remoto es Windows o macOS. | Es un límite: solo Linux entrega esas métricas. |
 | Los ajustes no se guardan y aparece una lista | Un valor no es válido. | Corrige lo que dice la lista (sección 7.3). |
 
+# 11. Alertas por Telegram
+
+Además de mostrar colores y eventos en el panel, Centinela puede mandarte un mensaje de Telegram cuando un servicio cae, cuando se recupera y, si lo pides, cuando queda DEGRADADO. Es **opcional** y **viene desactivada**. Solo la configuran los administradores, en **Ajustes**, sección **Alertas**; los demás roles no la ven. Requiere el servidor real (en demostración dice "Disponible solo con el servidor.") y que el servidor tenga salida a Internet por HTTPS hacia `api.telegram.org`, puerto 443. Si no sabes si la tiene, consulta a quien administra el servidor.
+
+## 11.1 Configurarla paso a paso
+
+La propia sección trae un panel plegable **Cómo configurarlo** con estos pasos; aparece abierto la primera vez.
+
+![Ajustes, sección Alertas sin configurar: panel "Cómo configurarlo" con los seis pasos, aviso de privacidad e indicador "Sin configurar".](img/alertas-01.jpg)
+
+1. En Telegram abre **@BotFather**, envía `/newbot`, responde a las preguntas y copia el token que te entrega (se parece a `123456789:AAAA…`; ese es un ejemplo ficticio).
+2. En Centinela, en **Token del bot**, pega el token y pulsa **Guardar token**. Después solo verás "configurado (…XXXX)": el token completo no se vuelve a mostrar.
+3. Escríbele un mensaje al bot, o añádelo al grupo o canal donde quieres recibir los avisos.
+4. Pulsa **Buscar mis chats** y elige el destino en la lista: se rellena **Chat de destino**. (Telegram solo recuerda unas 24 horas los mensajes enviados al bot: escríbele poco antes de buscar.)
+5. Pulsa **Enviar mensaje de prueba**. Debe llegar "✅ Centinela: mensaje de prueba" al chat y el panel dice "Mensaje de prueba enviado: revisa el chat en Telegram.".
+6. Marca **Enviar alertas por Telegram** y pulsa **Guardar**. Verás "Alertas guardadas".
+
+![Sección Alertas configurada: token guardado, chat de destino, opciones, resultado de la prueba y estado "Funcionando".](img/alertas-02.jpg)
+
+**Grupos y canales.** Si el bot no aparece al buscar en un grupo, escribe `/start@nombre_del_bot` en el grupo (o vuelve a añadirlo). En un canal, el bot debe ser **administrador**. Usa un **bot dedicado** a Centinela: si otro programa lee sus mensajes, la búsqueda falla. Siempre puedes escribir el chat a mano (un número como `-1001234567890` o `@canal` si es público).
+
+> **Nota:** "Enviar mensaje de prueba" y "Buscar mis chats" admiten una acción a la vez y una cada 5 segundos por administrador. Si pulsas demasiado pronto, espera unos segundos.
+
+## 11.2 Opciones
+
+| Opción | Qué hace | Valores |
+|---|---|---|
+| Enviar alertas por Telegram | Enciende o apaga los avisos. | Desactivado por defecto. |
+| Nivel de detalle | **Mínimo**: nombre del servicio, organización y estado. **Completo**: añade la dirección (sin usuario, contraseña ni parámetros), el motivo y la hora. | Mínimo por defecto. |
+| Avisar tras N fallos seguidos | Comprobaciones fallidas seguidas necesarias antes de avisar; un número mayor evita falsas alarmas. | 1 a 10; por defecto 2. |
+| Avisar de recuperaciones | Avisa cuando un servicio que se había avisado como caído vuelve a funcionar. | Activada por defecto. |
+| Avisar también de DEGRADADO | Avisa también cuando un servicio queda DEGRADADO, no solo cuando cae. Genera más mensajes. | Desactivada por defecto. |
+
+**Guardar** guarda estas opciones; el token tiene sus propios botones (**Guardar token** y **Borrar token**; este último pide confirmación y desactiva las alertas). Cada campo tiene un icono "?" con una explicación breve.
+
+## 11.3 Cómo son los avisos
+
+Cada aviso lleva un icono, el servicio y el estado:
+
+```
+🔴 Servidor web: CAÍDO
+🟠 [Cliente A] Portal clientes: DEGRADADO
+🟢 [Cliente A] Portal clientes: RECUPERADO
+```
+
+La etiqueta entre corchetes (la organización) solo aparece si no es la principal, Host.
+
+Para no saturarte:
+
+- **No avisa de cualquier tropiezo:** solo cuando el servicio acumula N fallos seguidos. Una caída corta, de menos de N comprobaciones, no genera aviso.
+- **Una vez por caída:** mientras siga caído no se repite el aviso. La recuperación solo se avisa si antes se avisó la caída.
+- **DEGRADADO activado:** solo se avisa cuando la gravedad sube. De DEGRADADO a DOWN avisa; de DOWN a DEGRADADO no.
+- **Agrupación:** los avisos para el mismo chat que ocurren en una ventana de 30 segundos llegan en un solo mensaje con el encabezado "N avisos" y una línea por servicio (hasta 20; el resto se resume como "… y N más").
+- **Reinicios:** si se reinicia el servidor, no se repiten las caídas ya avisadas y sí se avisa la recuperación pendiente. Los avisos que estaban esperando en ese momento se pierden, y los servicios caídos sin avisar vuelven a contar N fallos.
+- **Al desactivar** las alertas se olvidan las caídas avisadas: al volver a activarlas se parte de cero.
+
+## 11.4 El estado y la privacidad
+
+Bajo el formulario, el indicador **Estado** dice **Sin configurar**, **Desactivadas**, **Funcionando**, **Con errores** (el último envío falló; se ve el último error) o **Bloqueadas por el entorno** (quien administra el servidor bloqueó la función). Pulsa **Actualizar estado** para refrescarlo.
+
+> **Importante:** cada aviso sale de tu red local con el nombre del servicio y su organización (y, en modo Completo, la dirección y el motivo) y pasa por los servidores de Telegram. Los chats con bots **no tienen cifrado de extremo a extremo**. Usa un grupo privado con las personas necesarias.
+
+El token también puede definirlo quien administra el servidor con la variable `CENTINELA_TELEGRAM_TOKEN` (en el archivo `.env`, con permisos 600); entonces el campo queda bloqueado y dice que el token viene de una variable de entorno. Si el token se filtra, rótalo con `/token` en @BotFather y guarda el nuevo. La función se puede bloquear por completo con `CENTINELA_ALERTS_DISABLED=1`. Detalles en el capítulo 19 del "Manual de usuario y configuración".
+
+## 11.5 Si algo falla
+
+| Mensaje o síntoma | Qué significa | Qué hacer |
+|---|---|---|
+| Telegram rechazó el token (401) | Token mal copiado, incompleto o ya rotado. | Cópialo entero desde @BotFather y guárdalo de nuevo. |
+| Telegram no encuentra ese chat | El chat es incorrecto o nadie ha escrito al bot / no está en el grupo. | Escríbele al bot o añádelo y usa **Buscar mis chats**. |
+| No hay conexión con api.telegram.org | El servidor no tiene salida a Internet por el puerto 443. | Avisa a quien administra la red. |
+| Telegram no respondió a tiempo | La red del servidor es lenta o está filtrada. | Reintenta; si persiste, avisa a quien administra. |
+| Telegram pidió esperar antes de enviar más mensajes | Límite de Telegram. | Espera el tiempo indicado; los avisos reales se reintentan solos. |
+| El bot fue bloqueado o expulsado del chat | Lo bloquearon, lo sacaron del grupo o dejó de ser administrador del canal. | Vuelve a añadirlo o desbloquéalo y repite la prueba. |
+| Ese destino es un bot | En «Chat de destino» está el usuario del propio bot (`@MiBot_bot`) u otro bot. | Escríbele al bot, pulsa **Buscar mis chats** y elige tu chat o el grupo. |
+| Aún no has iniciado el chat con el bot | La persona nunca abrió el bot. | Abre el bot, pulsa **Iniciar** (/start) y repite la prueba. |
+| Las alertas están desactivadas por la variable de entorno CENTINELA_ALERTS_DISABLED | La función está bloqueada. | Pide a quien administra el servidor que quite la variable y reinicie. |
+| El token viene de una variable de entorno y no se puede cambiar desde aquí | El token lo define el servidor. | Pide que lo cambien en el servidor. |
+| Tras reiniciar no llegan avisos | Es normal: los avisos pendientes se pierden y se vuelve a contar N fallos. | Espera unas comprobaciones; la recuperación de lo ya avisado sí llegará. |
+| Llegan muchos avisos | N bajo, DEGRADADO activado o servicios que oscilan. | Sube "Avisar tras N fallos seguidos" o desactiva "Avisar también de DEGRADADO". |
+| El bot no aparece en "Buscar mis chats" | Nadie le escribió en las últimas 24 horas, no es administrador del canal, falta `/start@nombre_del_bot` en el grupo o otro programa lee sus mensajes. | Escríbele y vuelve a buscar, usa un bot dedicado o escribe el chat a mano. |
+| Un grupo dejó de recibir avisos | Pasó a supergrupo y cambió su identificador. | Centinela lo corrige solo ("El grupo pasó a supergrupo; chat actualizado"); si no, busca el chat de nuevo y guarda. |
+
 # Anexo A. Glosario
 
 | Término | Significado |
@@ -837,6 +924,9 @@ Revisa que la insignia diga **En vivo**. Alguien deberá volver a iniciar sesió
 | Huella (SHA-256) | Resumen del certificado del agente; el panel la compara antes de enviar el token. |
 | Disponibilidad | Porcentaje de mediciones en que el servicio no estuvo DOWN. |
 | Sesión | Periodo en que tu navegador permanece identificado tras iniciar sesión. |
+| Bot de Telegram | Cuenta automática de Telegram que Centinela usa para enviar los avisos; se crea con @BotFather. |
+| Token del bot | Clave secreta del bot. Quien la tenga puede controlarlo; no la compartas. |
+| Chat de destino | Chat, grupo o canal de Telegram donde llegan los avisos. |
 
 # Anexo B. Qué rol puede hacer qué
 
@@ -858,6 +948,7 @@ Revisa que la insignia diga **En vivo**. Alguien deberá volver a iniciar sesió
 | Exportar objetivos | Sí | Sí | Sí |
 | Crear, editar y eliminar organizaciones | Sí | Sí | No |
 | Cambiar Ajustes y umbrales | Sí | Sí | No |
+| Ver y configurar las Alertas por Telegram (en Ajustes) | Sí | No | No |
 | Ver la sección Usuarios | Sí | No | No |
 | Crear, editar, deshabilitar y eliminar usuarios | Sí | No | No |
 | Ver los datos del equipo servidor en Ajustes | Sí | No | No |
