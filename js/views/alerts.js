@@ -32,6 +32,7 @@
     chat: 'Es tu chat, grupo o canal donde llegarán los avisos, no el usuario del bot. Búscalo con el botón (tras escribirle al bot) o escribe su identificador o el @canal público.',
     detail: 'Mínimo envía solo el nombre del servicio, su organización y el estado. Completo añade además la dirección y el motivo.',
     fails: 'Cuántas comprobaciones fallidas seguidas hacen falta antes de avisar. Un número mayor evita falsas alarmas.',
+    wait: 'Tiempo que Centinela junta los cambios antes de enviarlos en un solo mensaje. Con 0 avisa al instante, pero si caen muchos servicios a la vez recibirás más mensajes.',
     recovery: 'Envía un aviso cuando un servicio que estaba caído vuelve a funcionar.',
     degraded: 'Avisa también cuando un servicio pasa a DEGRADADO, no solo cuando cae. Genera más mensajes.'
   };
@@ -187,6 +188,11 @@
         '<div class="row c2"><div class="field"><span class="lbl" id="' + id + 'detail-l">Nivel de detalle</span>' + '<div class="al-lblrow">' +
           '<div class="seg" role="group" aria-labelledby="' + id + 'detail-l" aria-describedby="' + id + 'h-detail"><button type="button" data-detail="minimal" aria-pressed="' + (cfg.detail !== 'full') + '">Mínimo</button><button type="button" data-detail="full" aria-pressed="' + (cfg.detail === 'full') + '">Completo</button></div>' + helpBtn('detail', 'Nivel de detalle') + '</div>' + helpTxt('detail') + '</div>' +
           '<div class="field">' + labelRow(id + 'fails', 'Avisar tras N fallos seguidos', 'fails') + '<input id="' + id + 'fails" type="number" min="1" max="10" step="1" value="' + U.esc(String(cfg.failsBeforeAlert || 2)) + '" aria-describedby="' + id + 'fails-h ' + id + 'h-fails"><span class="hint" id="' + id + 'fails-h">De 1 a 10.</span>' + helpTxt('fails') + '</div></div>' +
+        '<div class="row c2"><div class="field">' + labelRow(id + 'wait', 'Esperar antes de enviar', 'wait') + '<select id="' + id + 'wait" aria-describedby="' + id + 'h-wait">' +
+          [[0, 'Sin espera (al instante)'], [10, '10 segundos'], [30, '30 segundos (recomendado)'], [60, '60 segundos']].map(function (o) {
+            var cur = typeof cfg.groupWindowSec === 'number' ? cfg.groupWindowSec : 30;
+            return '<option value="' + o[0] + '"' + (o[0] === cur ? ' selected' : '') + '>' + o[1] + '</option>';
+          }).join('') + '</select>' + helpTxt('wait') + '</div></div>' +
         '<div class="field"><div class="al-lblrow"><label class="check" for="' + id + 'recovery"><input id="' + id + 'recovery" type="checkbox"' + (cfg.notifyRecovery ? ' checked' : '') + ' aria-describedby="' + id + 'h-recovery"> Avisar de recuperaciones</label>' + helpBtn('recovery', 'Avisar de recuperaciones') + '</div>' + helpTxt('recovery') + '</div>' +
         '<div class="field"><div class="al-lblrow"><label class="check" for="' + id + 'degraded"><input id="' + id + 'degraded" type="checkbox"' + (cfg.notifyDegraded ? ' checked' : '') + ' aria-describedby="' + id + 'h-degraded"> Avisar también de DEGRADADO</label>' + helpBtn('degraded', 'Avisar también de DEGRADADO') + '</div>' + helpTxt('degraded') + '</div>' +
         '<div class="toolbar" style="margin:16px 0 0"><button type="submit" class="btn btn--primary" data-save>Guardar</button>' +
@@ -214,6 +220,12 @@
       });
     }
 
+    // Valor del desplegable de espera; si no es uno permitido se conserva el guardado (30 por defecto).
+    function waitValue() {
+      var v = String(q('#' + id + 'wait').value || '');
+      return /^(0|10|30|60)$/.test(v) ? Number(v) : (typeof cfg.groupWindowSec === 'number' ? cfg.groupWindowSec : 30);
+    }
+
     function currentChat() { return q('#' + id + 'chat').value.trim(); }
 
     function onSave(btn) {
@@ -224,7 +236,7 @@
       if (errs.length) { showErrors(errs); return; }
       q('[data-errors]').innerHTML = '';
       var body = { enabled: enabled, detail: q('[data-detail][aria-pressed="true"]').getAttribute('data-detail'),
-        failsBeforeAlert: n, notifyRecovery: q('#' + id + 'recovery').checked, notifyDegraded: q('#' + id + 'degraded').checked };
+        failsBeforeAlert: n, groupWindowSec: waitValue(), notifyRecovery: q('#' + id + 'recovery').checked, notifyDegraded: q('#' + id + 'degraded').checked };
       // El chat solo se envía si cambió respecto a lo guardado (evita pisar una migración hecha por el servidor).
       if (currentChat() !== (cfg.chatId || '')) body.chatId = currentChat();
       setBusy(btn, true);

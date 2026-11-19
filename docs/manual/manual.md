@@ -1,7 +1,7 @@
 ---
 title: Manual de usuario y configuración
 subtitle: Dashboard modular de monitoreo de IPs y URLs, estilo PingPlotter / Zabbix
-version: 2.3.0
+version: 2.4.0
 date: 19 de noviembre de 2026
 ---
 
@@ -55,7 +55,7 @@ El sistema tiene tres piezas. Entender para qué sirve cada una evita la confusi
 
 1. Descomprime el proyecto (carpeta `centinela-monitor`) en el servidor que hará las mediciones.
 2. Abre una terminal en esa carpeta y ejecuta: `node server/server.js` (también sirve `npm start`).
-3. La terminal muestra la dirección, por ejemplo `Centinela 2.3.0 → http://127.0.0.1:8080`, el número de usuarios, la carpeta de datos usada y, solo en el primer arranque, el usuario inicial con su contraseña (sección 9.1).
+3. La terminal muestra la dirección, por ejemplo `Centinela 2.4.0 → http://127.0.0.1:8080`, el número de usuarios, la carpeta de datos usada y, solo en el primer arranque, el usuario inicial con su contraseña (sección 9.1).
 4. Abre esa dirección en el navegador e inicia sesión con el usuario `administrador` y la contraseña inicial (sección 9.1). Si la contraseña era la aleatoria del registro, el panel te pedirá cambiarla antes de continuar. La insignia de arriba debe decir En vivo.
 5. Ve a Objetivos y agrega tus IPs y URLs (capítulo 6). En el primer arranque el sistema crea data/ con objetivos de ejemplo (DNS Google, DNS Cloudflare, Google, Wikipedia, Sitio de ejemplo y el servidor local); puedes borrarlos.
 
@@ -461,7 +461,7 @@ La primera vez que arranca el servidor (cuando no existe data/users.json) crea u
 En el registro de arranque (la consola con `node server/server.js`; en contenedor, `docker logs centinela` o `podman logs centinela`) la contraseña generada aparece así:
 
 ```
-Centinela 2.3.0 → http://127.0.0.1:8080
+Centinela 2.4.0 → http://127.0.0.1:8080
 Acceso: inicio de sesión activado (1 usuario(s))
 Usuario inicial creado: administrador (deberá cambiar la contraseña al entrar)
 ============================================================
@@ -941,7 +941,7 @@ El propio panel usa esta API, y puedes usarla para integrarte con otros sistemas
 | POST /api/traceroute | Traceroute. Cuerpo: {"targetId":"…"} o {"address":"host"} (los Lectores solo con targetId). Responde 429 si ya tienes uno en curso o hay 3 en total. |
 | GET, PUT /api/settings | Leer o guardar ajustes y umbrales. Si hay valores no válidos (fuera de rango, aviso mayor o igual que el crítico, avisos en 0), responde 400 con la lista errors. |
 | GET, PUT /api/layout?org={id} | Leer o guardar la disposición del Panel de una organización. |
-| GET, PUT /api/alerts | Solo administradores (403 “Solo un administrador puede configurar las alertas” para los demás). Leer o guardar la configuración de alertas por Telegram: enabled, chatId, detail (minimal o full), failsBeforeAlert (1 a 10), notifyRecovery y notifyDegraded. La respuesta nunca incluye el token: solo tokenConfigured, tokenHint (últimos 4 caracteres), tokenSource (env, panel o none) y blockedByEnv. Un valor no válido responde 400 con la lista errors; activar sin token o sin chat también. |
+| GET, PUT /api/alerts | Solo administradores (403 “Solo un administrador puede configurar las alertas” para los demás). Leer o guardar la configuración de alertas por Telegram: enabled, chatId, detail (minimal o full), failsBeforeAlert (1 a 10), groupWindowSec (espera antes de enviar, en segundos: 0, 10, 30 o 60; por defecto 30; otro valor responde 400 “La espera antes de enviar debe ser 0, 10, 30 o 60 segundos.”), notifyRecovery y notifyDegraded. La respuesta nunca incluye el token: solo tokenConfigured, tokenHint (últimos 4 caracteres), tokenSource (env, panel o none) y blockedByEnv. Un valor no válido responde 400 con la lista errors; activar sin token o sin chat también. |
 | PUT, DELETE /api/alerts/token | Solo administradores. Guardar ({"token":"…"}) o borrar el token del panel; al borrarlo se desactivan las alertas. 400 si no tiene formato de token; 409 con code token_from_env si el token viene de CENTINELA_TELEGRAM_TOKEN. |
 | POST /api/alerts/test, POST /api/alerts/chats | Solo administradores. Enviar un mensaje de prueba (cuerpo opcional {"chatId":"…"} para probar un chat sin guardar) y buscar los chats que han escrito al bot. Responden 200 con ok: true, o con ok: false y un code (invalid_token, chat_not_found, no_internet, timeout, rate_limited, blocked, unknown). 400 si falta el token (no_token) o el chat (no_chat); 409 con alerts_disabled_by_env si CENTINELA_ALERTS_DISABLED está activa; 429 con Retry-After si ya hay una acción en curso o pasaron menos de 5 s desde la anterior del mismo administrador. |
 | GET /api/alerts/status | Solo administradores. Estado de los envíos: state (off, ok, error o blocked), lastSentAt, lastError, queued, sentTotal, failedTotal, droppedTotal y note. |
@@ -1764,6 +1764,7 @@ En la 2.3.0 hay un solo chat de destino para todas las organizaciones; no se pue
 | Chat de destino | Chat, grupo o canal que recibe los avisos. | Número (por ejemplo `-1001234567890`) o @canal público. | Para cambiar de destino. Los avisos ya en espera salen al chat anterior. |
 | Nivel de detalle | Qué lleva cada aviso. | **Mínimo** (por defecto): nombre del servicio, organización y estado. **Completo**: además la dirección, el motivo y la hora. | Completo si quien lee el chat necesita el contexto sin abrir el panel (sección 19.8 sobre privacidad). |
 | Avisar tras N fallos seguidos | Cuántas comprobaciones fallidas seguidas se necesitan antes de avisar. | Entero de 1 a 10. Por defecto 2. | Súbelo para evitar falsas alarmas por fallos aislados; con 1 avisa en la primera caída. |
+| Esperar antes de enviar | Tiempo que Centinela junta los cambios de un mismo chat antes de enviarlos en un solo mensaje. | **Sin espera (al instante)**, **10 segundos**, **30 segundos (recomendado, valor por defecto)** o **60 segundos**. En la API y en `data/alerts.json`: `groupWindowSec` con 0, 10, 30 o 60. | Con 0 el aviso sale en cuanto se detecta el cambio, pero si caen muchos servicios a la vez recibirás más mensajes (uno por cada ráfaga, respetando los límites de Telegram). Sube a 60 si prefieres menos mensajes. Aplica a los avisos que se generen después de guardar. Ver “Cuánto tarda en llegar un aviso” en la sección 19.5. |
 | Avisar de recuperaciones | Avisa cuando un servicio que se había avisado como caído o degradado vuelve a funcionar. | Activada por defecto. | Desmárcala si solo te interesan las caídas. |
 | Avisar también de DEGRADADO | Avisa cuando un servicio pasa a DEGRADADO, no solo cuando cae. | Desactivada por defecto. | Actívala si quieres enterarte de latencias altas, certificados por vencer, etc. Genera más mensajes. |
 
@@ -1797,13 +1798,31 @@ En un aviso de recuperación el motivo es “Servicio recuperado”. La direcci�
 | Recuperación | Solo se avisa si antes se avisó la caída (o la degradación), y solo con “Avisar de recuperaciones” marcada. Si no se avisó la caída, no se avisa la recuperación. |
 | DEGRADADO activado | Se avisa tras N resultados seguidos DEGRADADO o DOWN. Solo se avisa cuando la **gravedad sube**: de DEGRADADO a DOWN avisa la caída (tras N DOWN seguidos); de DOWN a DEGRADADO no avisa. Con DEGRADADO desactivado, un resultado DEGRADADO ni cuenta como fallo ni interrumpe una racha de caídas. |
 | Estado desconocido | No genera avisos. |
-| Agrupación | Los avisos para un mismo chat que ocurren dentro de una ventana de 30 segundos se envían en un solo mensaje con el encabezado “N avisos” y una línea por servicio. Se muestran hasta 20; el resto se resume como “… y N más”. En modo Completo, los datos de cada servicio van con sangría bajo su línea. |
+| Agrupación | Los avisos para un mismo chat que ocurren dentro de la ventana de espera (“Esperar antes de enviar”: 30 s por defecto, configurable a 0, 10, 30 o 60 s) se envían en un solo mensaje con el encabezado “N avisos” y una línea por servicio. Con 0 no se espera: el aviso sale en cuanto se detecta el cambio, aunque los límites de Telegram y la cola con reintentos se siguen respetando. Se muestran hasta 20; el resto se resume como “… y N más”. En modo Completo, los datos de cada servicio van con sangría bajo su línea. |
 | Límites de Telegram | Un mensaje admite hasta 4096 caracteres (si no cabe, se acortan las líneas mostradas). Se respeta el ritmo de Telegram: como máximo un mensaje por segundo por chat y 20 por minuto en grupos. Si Telegram pide esperar (error 429), Centinela espera ese tiempo y reintenta. |
 | Reintentos | Un error temporal (red, plazo de 10 s, fallo 5xx de Telegram) se reintenta con esperas de 2, 4, 8 y 16 segundos, hasta 5 intentos; después el aviso se descarta y se anota en “fallidos”. Un error definitivo (token inválido, chat no encontrado, bot bloqueado) no se reintenta. |
 | Cola | Los avisos pendientes viven en memoria; la cola admite 200 mensajes (el exceso descarta los más antiguos y se cuenta en “descartados”). |
 | Al reiniciar | Centinela recuerda en `data/alerts.json` qué servicios tienen una caída avisada. Tras reiniciar **no repite** esos avisos aunque sigan caídos, y **sí avisa la recuperación** pendiente cuando vuelvan a funcionar. Los servicios caídos que no se habían avisado empiezan a contar de nuevo (necesitan N fallos seguidos). Los avisos que estaban en cola o dentro de la ventana de agrupación al reiniciar se pierden. |
 | Al desactivar | Desactivar las alertas (o borrar el token) borra esa memoria: al volver a activarlas se parte de cero y no se avisan recuperaciones de caídas antiguas. |
 | Servicios pausados o eliminados | Un servicio pausado pierde su racha de fallos pero conserva su caída avisada, para avisar la recuperación si se reactiva. Si se elimina, se olvida y no se avisa su recuperación. Si el servicio se elimina mientras su aviso esperaba, el aviso se envía igualmente con los datos que tenía. |
+
+### Cuánto tarda en llegar un aviso
+
+El tiempo depende del intervalo de comprobación del servicio, de “Avisar tras N fallos seguidos” y de “Esperar antes de enviar”:
+
+- **Caída:** aproximadamente N fallos × intervalo del servicio + la espera.
+- **Recuperación:** hasta un intervalo (la siguiente comprobación correcta) + la espera.
+- A eso se suman 1 o 2 segundos de Telegram.
+
+Ejemplo con intervalo de 10 s y N = 2:
+
+| Espera | Caída | Recuperación |
+|---|---|---|
+| 0 (al instante) | unos 20 a 30 s | unos 10 s |
+| 30 s (por defecto) | unos 50 a 60 s | unos 40 s |
+| 60 s | unos 80 a 90 s | unos 70 s |
+
+Qué valor elegir: 30 s (por defecto) es un buen equilibrio; 10 s o 0 si necesitas enterarte cuanto antes (sobre todo de las recuperaciones); 60 s si prefieres menos mensajes durante una caída masiva. Para acelerar la caída también puedes bajar N o el intervalo del servicio. Un cambio de la espera aplica a los avisos que se generen después de guardar.
 
 Ejemplo de lo que llega al chat (servicios y organización ficticios):
 
@@ -1888,7 +1907,8 @@ Los errores de Telegram aparecen en la sección con la causa y la acción; esta 
 | Nada llega tras reiniciar el servidor | Es normal: los avisos pendientes de cola y de la ventana de agrupación se pierden, y los servicios que ya estaban avisados como caídos no se repiten. Los que no estaban avisados necesitan N fallos seguidos desde cero. | Espera N comprobaciones. La recuperación de lo ya avisado sí llegará. Para comprobar el canal, usa “Enviar mensaje de prueba”. |
 | No llega el aviso de un servicio que cayó | No acumuló N fallos seguidos, está DEGRADADO y esa opción está desactivada, ya se había avisado y no se recuperó, o el interruptor está apagado. | Revisa el Estado y “Avisar tras N fallos seguidos”; para forzar un reinicio del conteo, desactiva y vuelve a activar las alertas. |
 | No llega la recuperación | La caída nunca se avisó, “Avisar de recuperaciones” está desmarcada o se desactivaron las alertas entre medias. | Revisa esas opciones; solo se avisa la recuperación de lo avisado. |
-| Llegan muchos avisos | N demasiado bajo, “Avisar también de DEGRADADO” activada o servicios que oscilan. | Sube “Avisar tras N fallos seguidos” (por ejemplo a 3 o 5), desactiva DEGRADADO o ajusta los umbrales (sección 8.2). Los avisos simultáneos ya se agrupan en una ventana de 30 s. |
+| Llegan muchos avisos | N demasiado bajo, “Avisar también de DEGRADADO” activada o servicios que oscilan. | Sube “Avisar tras N fallos seguidos” (por ejemplo a 3 o 5), desactiva DEGRADADO o ajusta los umbrales (sección 8.2). Los avisos simultáneos ya se agrupan durante la espera configurada (30 s por defecto); subir “Esperar antes de enviar” a 60 s los junta más. |
+| El aviso tarda en llegar | Suma del intervalo de comprobación, los N fallos seguidos y “Esperar antes de enviar” (30 s por defecto); la recuperación espera además la siguiente comprobación correcta. Si hay muchos avisos, Telegram limita el ritmo (1 mensaje por segundo por chat, 20 por minuto en grupos). | Baja “Esperar antes de enviar” a 10 s o a “Sin espera (al instante)” (con 0 recibirás más mensajes si caen muchos servicios a la vez), reduce “Avisar tras N fallos seguidos” o el intervalo del servicio. Ver la sección 19.5. |
 | El bot no aparece en “Buscar mis chats” | Nadie ha escrito al bot en las últimas 24 h, el bot no es administrador del canal, no se pulsó `/start@nombre_del_bot` en el grupo, o otro programa lee los mensajes del bot. | Escríbele al bot y busca de nuevo; en un grupo usa `/start@nombre_del_bot`; en un canal hazlo administrador; o escribe el chat a mano. Usa un bot dedicado. |
 | Un grupo dejó de recibir avisos y el identificador cambió | El grupo pasó a supergrupo y Telegram le dio otro identificador. | Centinela lo corrige solo al enviar (“El grupo pasó a supergrupo; chat actualizado”). Si no, usa “Buscar mis chats” y guarda el nuevo. |
 

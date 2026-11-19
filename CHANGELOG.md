@@ -5,6 +5,11 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). V
 
 ## [Sin publicar]
 
+## [2.4.0] - 2026-11-19
+
+### Agregado
+- **Alertas por Telegram: «Esperar antes de enviar».** Nuevo ajuste en Ajustes → Alertas para elegir cuánto junta Centinela los cambios antes de enviarlos en un solo mensaje: «Sin espera (al instante)», 10, 30 (recomendado, igual que hasta ahora) o 60 segundos. Con la espera reducida, el aviso de recuperación llega mucho antes; con 0, si caen muchos servicios a la vez recibirás más mensajes. Los límites de Telegram y los reintentos se siguen respetando. El cambio vale para los avisos que se generen después de guardar. Se guarda como `groupWindowSec` en `data/alerts.json` y en `GET/PUT /api/alerts`.
+
 ## [2.3.0] - 2026-11-19
 
 ### Agregado

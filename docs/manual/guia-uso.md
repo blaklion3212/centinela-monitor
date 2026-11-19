@@ -1,7 +1,7 @@
 ---
 title: Guía de uso
 subtitle: Cómo usar el panel de monitoreo, función por función
-version: 2.3.0
+version: 2.4.0
 date: 19 de noviembre de 2026
 ---
 
@@ -842,6 +842,7 @@ La propia sección trae un panel plegable **Cómo configurarlo** con estos pasos
 | Enviar alertas por Telegram | Enciende o apaga los avisos. | Desactivado por defecto. |
 | Nivel de detalle | **Mínimo**: nombre del servicio, organización y estado. **Completo**: añade la dirección (sin usuario, contraseña ni parámetros), el motivo y la hora. | Mínimo por defecto. |
 | Avisar tras N fallos seguidos | Comprobaciones fallidas seguidas necesarias antes de avisar; un número mayor evita falsas alarmas. | 1 a 10; por defecto 2. |
+| Esperar antes de enviar | Tiempo que Centinela junta los cambios antes de enviarlos en un solo mensaje. Con "Sin espera" avisa al instante, pero si caen muchos servicios a la vez recibirás más mensajes. | Sin espera (al instante), 10, 30 o 60 segundos; por defecto 30 segundos (recomendado). |
 | Avisar de recuperaciones | Avisa cuando un servicio que se había avisado como caído vuelve a funcionar. | Activada por defecto. |
 | Avisar también de DEGRADADO | Avisa también cuando un servicio queda DEGRADADO, no solo cuando cae. Genera más mensajes. | Desactivada por defecto. |
 
@@ -864,7 +865,8 @@ Para no saturarte:
 - **No avisa de cualquier tropiezo:** solo cuando el servicio acumula N fallos seguidos. Una caída corta, de menos de N comprobaciones, no genera aviso.
 - **Una vez por caída:** mientras siga caído no se repite el aviso. La recuperación solo se avisa si antes se avisó la caída.
 - **DEGRADADO activado:** solo se avisa cuando la gravedad sube. De DEGRADADO a DOWN avisa; de DOWN a DEGRADADO no.
-- **Agrupación:** los avisos para el mismo chat que ocurren en una ventana de 30 segundos llegan en un solo mensaje con el encabezado "N avisos" y una línea por servicio (hasta 20; el resto se resume como "… y N más").
+- **Agrupación:** los avisos para el mismo chat que ocurren mientras dura la espera ("Esperar antes de enviar": 30 segundos por defecto, configurable) llegan en un solo mensaje con el encabezado "N avisos" y una línea por servicio (hasta 20; el resto se resume como "… y N más"). Con "Sin espera" el aviso sale en cuanto se detecta el cambio; Telegram sigue limitando el ritmo (1 mensaje por segundo por chat).
+- **Cuánto tarda en llegar:** una caída llega aproximadamente tras N fallos seguidos × el intervalo del servicio, más la espera. Una recuperación llega tras la siguiente comprobación correcta (hasta un intervalo), más la espera. Con un servicio que se mide cada 10 segundos, N = 2 y la espera por defecto, la caída tarda unos 50 a 60 segundos y la recuperación unos 40. Con "Sin espera" serían unos 20 a 30 y unos 10 segundos. Qué elegir: deja 30 segundos si prefieres pocos mensajes; baja a 10 segundos o a "Sin espera" si quieres enterarte cuanto antes. El cambio vale para los avisos que se generen después de guardar.
 - **Reinicios:** si se reinicia el servidor, no se repiten las caídas ya avisadas y sí se avisa la recuperación pendiente. Los avisos que estaban esperando en ese momento se pierden, y los servicios caídos sin avisar vuelven a contar N fallos.
 - **Al desactivar** las alertas se olvidan las caídas avisadas: al volver a activarlas se parte de cero.
 
@@ -892,6 +894,7 @@ El token también puede definirlo quien administra el servidor con la variable `
 | El token viene de una variable de entorno y no se puede cambiar desde aquí | El token lo define el servidor. | Pide que lo cambien en el servidor. |
 | Tras reiniciar no llegan avisos | Es normal: los avisos pendientes se pierden y se vuelve a contar N fallos. | Espera unas comprobaciones; la recuperación de lo ya avisado sí llegará. |
 | Llegan muchos avisos | N bajo, DEGRADADO activado o servicios que oscilan. | Sube "Avisar tras N fallos seguidos" o desactiva "Avisar también de DEGRADADO". |
+| El aviso tarda en llegar | Se suman el intervalo del servicio, los N fallos seguidos y "Esperar antes de enviar" (30 segundos por defecto). La recuperación espera además la siguiente comprobación correcta. | Baja "Esperar antes de enviar" a 10 segundos o a "Sin espera (al instante)" (con "Sin espera" llegarán más mensajes si caen muchos servicios a la vez) o reduce "Avisar tras N fallos seguidos". |
 | El bot no aparece en "Buscar mis chats" | Nadie le escribió en las últimas 24 horas, no es administrador del canal, falta `/start@nombre_del_bot` en el grupo o otro programa lee sus mensajes. | Escríbele y vuelve a buscar, usa un bot dedicado o escribe el chat a mano. |
 | Un grupo dejó de recibir avisos | Pasó a supergrupo y cambió su identificador. | Centinela lo corrige solo ("El grupo pasó a supergrupo; chat actualizado"); si no, busca el chat de nuevo y guarda. |
 

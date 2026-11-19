@@ -149,10 +149,10 @@ test('RA-61 los valores guardados se reflejan en el formulario (activado, comple
 
 test('RA-64 cada campo tiene una label asociada y los iconos de ayuda son botones con aria-label y región que los describe', async function () {
   var u = await montar();
-  ['Enviar alertas por Telegram', 'Token del bot', 'Chat de destino', 'Avisar tras N fallos seguidos', 'Avisar de recuperaciones', 'Avisar también de DEGRADADO']
+  ['Enviar alertas por Telegram', 'Token del bot', 'Chat de destino', 'Avisar tras N fallos seguidos', 'Esperar antes de enviar', 'Avisar de recuperaciones', 'Avisar también de DEGRADADO']
     .forEach(function (r) { assert.ok(inputDe(u, r)); });
   var ayudas = u.qa('[data-help-for]');
-  assert.deepStrictEqual(ayudas.map(function (b) { return b.getAttribute('data-help-for'); }).sort(), ['chat', 'degraded', 'detail', 'enabled', 'fails', 'recovery', 'token']);
+  assert.deepStrictEqual(ayudas.map(function (b) { return b.getAttribute('data-help-for'); }).sort(), ['chat', 'degraded', 'detail', 'enabled', 'fails', 'recovery', 'token', 'wait']);
   ayudas.forEach(function (b) {
     assert.strictEqual(b.tag, 'button'); assert.strictEqual(b.getAttribute('type'), 'button');
     assert.ok(/^Ayuda: /.test(b.getAttribute('aria-label') || ''), 'aria-label');
@@ -281,13 +281,14 @@ test('RA-61 Guardar envía todos los campos editables con sus tipos y refleja la
   inputDe(u, 'Chat de destino').value = '  @mi_canal ';
   D.click(u.q('[data-detail="full"]'));
   inputDe(u, 'Avisar tras N fallos seguidos').value = '4';
+  inputDe(u, 'Esperar antes de enviar').value = '10';
   inputDe(u, 'Avisar de recuperaciones').checked = false;
   inputDe(u, 'Avisar también de DEGRADADO').checked = true;
   D.click(u.q('[data-save]'));
   await D.settle();
   var c = u.llamadas('PUT /api/alerts');
   assert.strictEqual(c.length, 1);
-  assert.deepStrictEqual(c[0].body, { enabled: true, chatId: '@mi_canal', detail: 'full', failsBeforeAlert: 4, notifyRecovery: false, notifyDegraded: true });
+  assert.deepStrictEqual(c[0].body, { enabled: true, chatId: '@mi_canal', detail: 'full', failsBeforeAlert: 4, groupWindowSec: 10, notifyRecovery: false, notifyDegraded: true });
   assert.ok(u.toasts.some(function (t) { return /Alertas guardadas/.test(t.msg); }));
   assert.strictEqual(u.q('[data-detail="full"]').getAttribute('aria-pressed'), 'true');
   assert.strictEqual(u.q('[data-detail="minimal"]').getAttribute('aria-pressed'), 'false');

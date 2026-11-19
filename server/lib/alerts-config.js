@@ -17,6 +17,9 @@ var ORG_ID_RE = /^[a-z0-9]{1,32}$/;
 var TARGET_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 var MAX_ALERTED = 5000;
 
+// Esperas permitidas (s) para agrupar avisos antes de enviarlos; 0 envía en cuanto se detecta el cambio.
+var GROUP_WINDOWS = [0, 10, 30, 60];
+
 var DEFAULTS = {
   version: VERSION,
   enabled: false,
@@ -25,6 +28,7 @@ var DEFAULTS = {
   orgChats: {},
   detail: 'minimal',
   failsBeforeAlert: 2,
+  groupWindowSec: 30,
   notifyRecovery: true,
   notifyDegraded: false,
   alerted: {}
@@ -97,6 +101,7 @@ function sanitize(input, orgIds) {
   d.detail = src.detail === 'full' ? 'full' : 'minimal';
   var f = src.failsBeforeAlert;
   d.failsBeforeAlert = (typeof f === 'number' && isFinite(f)) ? Math.min(10, Math.max(1, Math.round(f))) : DEFAULTS.failsBeforeAlert;
+  d.groupWindowSec = GROUP_WINDOWS.indexOf(src.groupWindowSec) >= 0 ? src.groupWindowSec : DEFAULTS.groupWindowSec;
   d.notifyRecovery = typeof src.notifyRecovery === 'boolean' ? src.notifyRecovery : DEFAULTS.notifyRecovery;
   d.notifyDegraded = typeof src.notifyDegraded === 'boolean' ? src.notifyDegraded : DEFAULTS.notifyDegraded;
 
@@ -180,6 +185,10 @@ function validateUpdate(body, cfg, env) {
     if (typeof f !== 'number' || Math.floor(f) !== f || f < 1 || f > 10) errors.push('Los fallos consecutivos antes de avisar deben ser un entero entre 1 y 10.');
     else next.failsBeforeAlert = f;
   }
+  if (has(body, 'groupWindowSec')) {
+    if (GROUP_WINDOWS.indexOf(body.groupWindowSec) < 0) errors.push('La espera antes de enviar debe ser 0, 10, 30 o 60 segundos.');
+    else next.groupWindowSec = body.groupWindowSec;
+  }
   ['notifyRecovery', 'notifyDegraded'].forEach(function (k) {
     if (!has(body, k)) return;
     if (typeof body[k] !== 'boolean') errors.push('«' + k + '» debe ser verdadero o falso.');
@@ -210,6 +219,7 @@ function publicView(cfg, env) {
     orgChats: orgChats,
     detail: cfg && cfg.detail === 'full' ? 'full' : 'minimal',
     failsBeforeAlert: cfg ? cfg.failsBeforeAlert : DEFAULTS.failsBeforeAlert,
+    groupWindowSec: cfg && GROUP_WINDOWS.indexOf(cfg.groupWindowSec) >= 0 ? cfg.groupWindowSec : DEFAULTS.groupWindowSec,
     notifyRecovery: cfg ? !!cfg.notifyRecovery : DEFAULTS.notifyRecovery,
     notifyDegraded: cfg ? !!cfg.notifyDegraded : DEFAULTS.notifyDegraded,
     version: VERSION
@@ -217,7 +227,7 @@ function publicView(cfg, env) {
 }
 
 module.exports = {
-  DEFAULTS: DEFAULTS, FILE: FILE, load: load, save: save, validateUpdate: validateUpdate,
+  DEFAULTS: DEFAULTS, GROUP_WINDOWS: GROUP_WINDOWS, FILE: FILE, load: load, save: save, validateUpdate: validateUpdate,
   validateToken: validateToken, validateChatId: validateChatId, tokenInfo: tokenInfo,
   blockedByEnv: blockedByEnv, publicView: publicView, chatFor: chatFor, effectiveOn: effectiveOn
 };

@@ -166,6 +166,8 @@ function create(opts) {
   var log = opts.log || function (m) { console.log('[alertas] ' + m); };
   var clock = opts.clock || realClock();
   var c = mergeConsts(opts.consts);
+  // Si GROUP_WINDOW_MS llega en `consts` (variable interna de pruebas) manda sobre el ajuste groupWindowSec.
+  var fixedWindow = !!(opts.consts && Object.prototype.hasOwnProperty.call(opts.consts, 'GROUP_WINDOW_MS'));
   var version = opts.version || VERSION_FALLBACK;
   var cfgApi = alertsStore.cfgApi;
   var chatsFromUpdates = opts.chatsFromUpdates || (channel && channel.chatsFromUpdates);
@@ -425,6 +427,11 @@ function create(opts) {
   }
 
   /* ---- agrupación ---- */
+  function groupWindowMs() {
+    if (fixedWindow) return c.GROUP_WINDOW_MS;
+    var s = cfg && typeof cfg.groupWindowSec === 'number' ? cfg.groupWindowSec : c.GROUP_WINDOW_MS / 1000;
+    return s * 1000;
+  }
   function addToGroup(key, item) {
     var ch = chatState(key);
     if (!ch.group) {
@@ -437,7 +444,7 @@ function create(opts) {
         if (!grp || !grp.items.length) return;
         try { enqueue(resolveKey(key), formatMessage(grp.items, cfg, c)); }
         catch (e) { safeLog('Error interno al preparar un aviso'); }
-      }, c.GROUP_WINDOW_MS);
+      }, groupWindowMs());
     }
     ch.group.items.push(item);
   }

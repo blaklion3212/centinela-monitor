@@ -729,3 +729,21 @@ Resultado de las comprobaciones:
 - [x] Fase 9: versión 2.3.0 aprobada por el usuario; commit, etiqueta `v2.3.0` y push con `[skip ci]`.
 
 **Observación del usuario (pendiente de decidir):** el aviso de recuperación tarda en llegar tras corregir el objetivo. La causa es el intervalo de comprobación más la ventana de agrupación de 30 s; se le ofrece hacer configurable esa ventana en una versión futura.
+
+---
+
+## 2026-11-19 · Espera configurable de las alertas (2.4.0)
+
+- El usuario aprobó hacer configurable la ventana de agrupación de los avisos.
+- Nuevo ajuste `groupWindowSec` («Esperar antes de enviar»):
+  - Valores permitidos: 0, 10, 30 y 60 s. Por defecto 30, el comportamiento de la 2.3.0.
+  - Se valida en `alerts-config.js` y el motor lo aplica en `groupWindowMs()`.
+  - En la interfaz es un desplegable con ayuda.
+  - La variable interna `CENTINELA_ALERTS_GROUP_WINDOW_MS` sigue mandando sobre el ajuste, solo para pruebas.
+- `probador` añadió 28 pruebas (`test/alerts-espera.test.js`) y ajustó 2 de la interfaz. No encontró defectos.
+  - Aplicado: el desplegable conserva el valor guardado si llega vacío.
+- `documentador` actualizó el manual (19.4, 19.5 «Cuánto tarda en llegar un aviso», 19.11 y 13.3), la guía (cap. 11), RA-99, la arquitectura, el CHANGELOG y CAMBIOS-MANUAL.
+- Capturas de Alertas rehechas con un servidor temporal, un Telegram simulado y datos ficticios, todo borrado después. PDF regenerados: manual de 96 páginas y guía de 51.
+- Validación local: 810/810 en Node 18, 20, 22 y 24. La imagen se construye y responde. Podman quedó como estaba.
+- [x] Prueba del usuario con su bot: con «Sin espera», los avisos de caída y recuperación llegaron al instante. Contenedor eliminado sin rastro.
+- [x] Versión 2.4.0 aprobada: commit, etiqueta `v2.4.0` y push con `[skip ci]`.

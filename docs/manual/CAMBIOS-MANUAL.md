@@ -104,6 +104,19 @@ Capítulo nuevo en `manual.md` y en `guia-uso.md`. Los metadatos de versión de 
 | manual.md, Anexos C y D | Variables nuevas y mensajes y códigos de las alertas. | Código citado arriba. |
 | guia-uso.md, capítulo 11 (nuevo) | Versión breve para el administrador que lo configura: pasos, opciones, formato de avisos, estado y privacidad, y tabla de mensajes. Más 7.4 (remite al capítulo 11; la antigua 7.4 pasa a 7.5), fila en la matriz de roles, términos nuevos, la pregunta frecuente sobre correos y mensajes, y la tabla “Cómo leer esta guía”. | Código citado arriba. |
 
+## Espera configurable de las alertas (versión 2.4.0)
+
+Solo documentación del ajuste nuevo «Esperar antes de enviar». Los metadatos de versión de los manuales no cambian (siguen en 2.3.0) y los PDF se regeneran aparte.
+
+| Documento y sección | Qué cambió | Por qué (fuente) |
+|---|---|---|
+| manual.md, 19.4 | Fila nueva «Esperar antes de enviar» (0, 10, 30 o 60 s; por defecto 30) con cuándo cambiarla. | `js/views/alerts.js`, `server/lib/alerts-config.js`. |
+| manual.md, 19.5 | La fila «Agrupación» ya no dice «ventana de 30 segundos»: 30 s por defecto, configurable, y con 0 no se espera. Subsección nueva «Cuánto tarda en llegar un aviso» con la fórmula y un ejemplo (intervalo 10 s, N = 2). | `server/lib/notify.js` (`groupWindowMs`). |
+| manual.md, 19.11 | Fila nueva «El aviso tarda en llegar»; la fila «Llegan muchos avisos» remite a la espera configurada. | Ídem. |
+| manual.md, 13.3 | `GET, PUT /api/alerts` incluye `groupWindowSec` y su error 400. | `server/lib/alerts-config.js` (`validateUpdate`, `publicView`). |
+| guia-uso.md, 11.2 y 11.3 | Fila de opción nueva, agrupación sin «30 segundos» fijos, viñeta «Cuánto tarda en llegar» con el ejemplo. | Ídem. |
+| guia-uso.md, 11.5 | Fila nueva «El aviso tarda en llegar». | Ídem. |
+
 ## Paso a paso del contenedor (versión 2.3.0)
 
 Solo documentación; sin cambios de código ni de `compose.yml`. No se renumeró nada: las secciones 14.1 a 14.6 conservan su número y se añaden dos al final.

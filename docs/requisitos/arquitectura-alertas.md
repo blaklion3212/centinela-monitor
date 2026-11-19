@@ -87,7 +87,7 @@ create({ store, alertsStore, channel, env, log, clock?, consts? }) -> {
   - Un `up` con `alerted` activo produce la recuperación, solo si `notifyRecovery` está activo. Si no lo está, el objetivo sale de `alerted` en silencio.
   - Un `degraded` posterior a un `down` avisado no genera aviso cuando `notifyDegraded` está apagado.
 - **`alerted`:** se guarda en `alerts.json` mediante `alertsStore.save` solo cuando cambia (RA-44).
-- **Agrupador:** un temporizador por chat de `GROUP_WINDOW_MS` desde el primer aviso, con el formato de RA-32 a RA-34.
+- **Agrupador:** un temporizador por chat desde el primer aviso, con el formato de RA-32 a RA-34. Su duración es `GROUP_WINDOW_MS` (30 s) como valor por defecto, pero manda el ajuste `groupWindowSec` (0, 10, 30 o 60 s; RA-99), que `groupWindowMs()` lee de la configuración en cada ventana nueva; solo la variable interna de pruebas `CENTINELA_ALERTS_GROUP_WINDOW_MS` lo anula. Con 0 el temporizador se dispara de inmediato y la cola sigue aplicando los límites de ritmo.
 - **Cola:**
   - Una por chat, con su ritmo: `TG_MIN_GAP_CHAT_MS`, el global y el de grupo (RA-47).
   - Reintentos con `BACKOFF_MS` y `retry_after` acotado (RA-45, RA-46).

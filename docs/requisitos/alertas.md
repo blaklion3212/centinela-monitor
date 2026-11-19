@@ -54,7 +54,7 @@ Con `CENTINELA_AUTH=off` el usuario local ya es administrador (`LOCAL_USER`); se
 | Constante | Valor por defecto | Notas |
 |---|---|---|
 | `FAILS_BEFORE_ALERT` (ajuste `failsBeforeAlert`) | 2 | Entero 1 a 10. |
-| `GROUP_WINDOW_MS` | 30000 | Ventana de agrupación por chat. |
+| `GROUP_WINDOW_MS` (ajuste `groupWindowSec`) | 30000 (30 s) | Ventana de agrupación por chat. Es el valor por defecto; el administrador elige 0, 10, 30 o 60 s (RA-99). |
 | `SEND_TIMEOUT_MS` | 10000 | Plazo por petición a Telegram. |
 | `MAX_ATTEMPTS` | 5 | Intentos por mensaje (incluye el primero). |
 | `BACKOFF_MS` | 2000, 4000, 8000, 16000 | Esperas entre reintentos sin `retry_after`. |
@@ -161,7 +161,7 @@ Convención: cada requisito tiene un identificador `RA-nn`. Los criterios usan D
 **RA-33. Mensaje en modo completo.** Añade a la línea del modo mínimo: la dirección del objetivo (de `store.findTarget(id).address`), el motivo (`ev.text`) y la hora del evento. Dado el estado `up`, el motivo es «Servicio recuperado». Campos vacíos se omiten sin dejar líneas en blanco. Todo el texto se recorta a `TG_MAX_TEXT`. Antes de enviarse, si la dirección es una URL se le quitan usuario, contraseña, query y fragmento (queda `protocolo://host[:puerto]/ruta`); un host o IP se deja tal cual. Los caracteres de control (U+0000–U+001F, U+007F, U+2028, U+2029) de nombre, etiqueta, dirección y motivo se sustituyen por espacios.
 
 **RA-34. Agrupación por chat.**
-- Dado `GROUP_WINDOW_MS`, cuando llegan avisos para el mismo chat dentro de la ventana contada desde el primero, entonces se envían juntos en un solo mensaje con una línea por objetivo (en el formato del modo activo) y un encabezado con el recuento (p. ej. `3 avisos`).
+- Dada la ventana de agrupación (30 s por defecto, configurable con `groupWindowSec`, ver RA-99), cuando llegan avisos para el mismo chat dentro de la ventana contada desde el primero, entonces se envían juntos en un solo mensaje con una línea por objetivo (en el formato del modo activo) y un encabezado con el recuento (p. ej. `3 avisos`).
 - Dado un único aviso en la ventana, se envía como mensaje simple, sin encabezado de grupo.
 - Dados avisos de dos chats distintos, entonces se forman grupos independientes (ver RA-11).
 - Dado un grupo con más de `MAX_GROUP_LINES` líneas o más de `TG_MAX_TEXT` caracteres, entonces se parte en varios mensajes o se resume con «y N más», sin superar el límite.
@@ -335,6 +335,18 @@ Todas las rutas se declaran en la tabla de rutas del router (`ROUTES`) con `acce
 9. Reinicio simulado: las caídas ya avisadas no se repiten, la recuperación pendiente se avisa y una caída no avisada se avisa tras N fallos (RA-44).
 10. Variable `CENTINELA_ALERTS_DISABLED=1` y token por variable con prioridad.
 
+### 5.12 Cambios de la versión 2.4.0
+
+**RA-99. Espera configurable antes de enviar (`groupWindowSec`).** Hasta la 2.3.0 la ventana de agrupación era fija de 30 s; ahora es un ajuste cuyo valor por defecto sigue siendo 30 s. Motivo: el aviso de recuperación tardaba (intervalo de comprobación + 30 s).
+- Campo `groupWindowSec` (entero, segundos) en `data/alerts.json`, en `GET /api/alerts` y en `PUT /api/alerts`. Valores permitidos: 0, 10, 30 y 60. Por defecto 30.
+- Dado otro valor o tipo en `PUT /api/alerts`, entonces responde 400 con `errors` que incluye «La espera antes de enviar debe ser 0, 10, 30 o 60 segundos.» y no guarda nada.
+- Dado un valor no válido en `alerts.json` al cargar, se trata como 30 y el archivo se reescribe saneado.
+- Dado `groupWindowSec = 0`, el aviso se envía en cuanto se detecta el cambio, sin esperar; se siguen respetando `TG_MIN_GAP_CHAT_MS`, `TG_MAX_PER_MIN_GROUP` y la cola con reintentos (RA-45 a RA-47).
+- El cambio se aplica a los avisos que se generen después de guardar; los ya en espera conservan su plazo.
+- Interfaz: Ajustes → Alertas muestra el desplegable «Esperar antes de enviar» con «Sin espera (al instante)», «10 segundos», «30 segundos (recomendado)» y «60 segundos», con ayuda: «Tiempo que Centinela junta los cambios antes de enviarlos en un solo mensaje. Con 0 avisa al instante, pero si caen muchos servicios a la vez recibirás más mensajes.»
+- La variable interna de pruebas `CENTINELA_ALERTS_GROUP_WINDOW_MS`, si se define, manda sobre el ajuste (solo pruebas).
+- Tiempo aproximado hasta recibir un aviso: caída ≈ N fallos × intervalo del objetivo + espera; recuperación ≈ hasta un intervalo + espera; más 1 a 2 s de Telegram.
+
 ## 6. Casos límite
 
 - Objetivo eliminado mientras había un aviso en cola: el aviso se envía igualmente con los datos ya capturados en el evento; el modo completo usa la dirección guardada en el momento del aviso, no una consulta posterior.
@@ -395,6 +407,7 @@ Ejemplo de respuesta de `GET /api/alerts`:
   "orgChats": {},
   "detail": "minimal",
   "failsBeforeAlert": 2,
+  "groupWindowSec": 30,
   "notifyRecovery": true,
   "notifyDegraded": false,
   "alerted": {}
@@ -410,6 +423,7 @@ Ejemplo de respuesta de `GET /api/alerts`:
 | `orgChats` | objeto | `{ orgId: chatId }`; vacío en 2.3.0 (RA-10). |
 | `detail` | `minimal` o `full` | Por defecto `minimal`. |
 | `failsBeforeAlert` | entero 1–10 | Por defecto 2. |
+| `groupWindowSec` | 0, 10, 30 o 60 | Espera antes de enviar, en segundos. Por defecto 30; un valor inválido en el archivo se trata como 30 (RA-99). |
 | `notifyRecovery` | booleano | Por defecto `true`. |
 | `notifyDegraded` | booleano | Por defecto `false`. |
 | `alerted` | objeto | `{ targetId: "down" \| "degraded" }`. Lo gestiona el servidor (RA-44); no es editable por API. |
