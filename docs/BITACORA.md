@@ -634,3 +634,35 @@ Resultado de las comprobaciones:
   - Los pies de figura se actualizaron en el manual y en la guía. La guía ahora incluye también `p16-fig-009`.
 - PDF regenerados: manual de 73 páginas y guía de 45 páginas.
 - Pruebas: 399/399. `data/` intacto.
+
+---
+
+## 2026-11-18 · Revisión en contenedor y fallo del traceroute
+
+**Contenedor de revisión:** `podman-compose -p centinela-revision`, en el puerto 9595, abierto a la LAN. Estado inicial de podman registrado: vacío. El usuario lo revisa; se eliminará sin dejar rastro cuando lo confirme.
+
+**Fallo reportado por el usuario**
+- **Síntoma:** en la ventana de traceroute, tras Limpiar y elegir otro servicio, "Ejecutar" no mostraba nada hasta pulsar F5.
+- **Causa raíz:** `Grid.renderOne` (`js/ui/grid.js`) creaba un `ctx` nuevo en cada render, pero `init()` registra sus manejadores una sola vez con el primer `ctx`. `run(ctx)` usaba el objetivo original: trazaba el servicio anterior y descartaba el resultado, porque `st.key` ya era el nuevo.
+- **Corrección:** un único `ctx` por ventana, actualizado en cada render (`config`, `target`, `width`, `height` y `setConfig`). Las demás ventanas solo usaban `id`, `state` y `grid` en sus manejadores, pero la corrección las protege también.
+- **Prueba de regresión:** `test/traceroute-widget.test.js` (3 pruebas). Con el código anterior fallan las 3: las llamadas daban `['a','a']` en lugar de `['a','b']`.
+- **Resultado:** 402/402 pruebas.
+- El contenedor de revisión se recreó con `--force-recreate` y conservó el volumen.
+- El usuario verificó en el contenedor que el traceroute ya funciona y aprobó subir la corrección a GitHub, que queda en `[Sin publicar]`.
+
+---
+
+## 2026-11-18 · Consulta: alertas por Telegram
+
+**Petición del usuario:** investigar si es factible enviar alertas o avisos por Telegram y qué implica, sin hacer cambios. Después pidió documentarlo y retomarlo tras más pruebas.
+
+**Resultado:** es factible. El análisis completo está en `docs/propuesta-alertas-telegram.md`. Puntos clave:
+- **Integración:** escuchar el evento `event` del planificador (`server/lib/scheduler.js`).
+- **Requisitos y riesgos:** salida HTTPS a Internet (`api.telegram.org`), token como secreto en `.env`, antirruido y límites de envío, y datos que salen de la red local.
+- **Esfuerzo:** versión estimada 2.3.0.
+
+**Estado:** en espera. No hay código.
+
+**Pendientes**
+- [ ] Alertas por Telegram: retomar cuando el usuario lo indique. Antes hay que resolver las tres decisiones de la propuesta.
+- [ ] Contenedor de revisión `centinela-revision`: eliminarlo sin dejar rastro cuando el usuario lo confirme.
