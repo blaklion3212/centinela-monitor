@@ -123,6 +123,17 @@ function alertasActivas(extra) {
     notifyRecovery: true, notifyDegraded: false, alerted: {} }, extra || {});
 }
 
+// Igual que alertasActivas pero en el formato 2.5.0 (version 2, `notify` con los 9 tipos y alerted con claves id|tipo[|sub]).
+// `extra.notify` parcial se completa con los valores por defecto. alertasActivas conserva el formato 2.4.0 a propósito
+// (se migra al cargar) para las pruebas que lo usan.
+function alertasActivasV2(extra) {
+  var c = Object.assign({ version: 2, enabled: true, token: TOKEN, chatId: CHAT, orgChats: {}, detail: 'minimal', failsBeforeAlert: 2,
+    alerted: {} }, extra || {});
+  c.notify = Object.assign({ down: true, recovery: true, certExpired: true, certExpiring: false, certTrust: false,
+    latency: false, resources: false, disk: false, other: false }, (extra && extra.notify) || {});
+  return c;
+}
+
 // Lista todos los archivos bajo un directorio (para buscar el token en disco).
 function archivos(dir) {
   var out = [];
@@ -147,6 +158,6 @@ async function limpiar() {
 async function parar(h) { await h.stop(); servidores.splice(servidores.indexOf(h), 1); }
 
 module.exports = { arrancar: arrancar, nuevoSim: nuevoSim, nuevoDir: nuevoDir, nuevoUsuario: nuevoUsuario, nuevoAdmin: nuevoAdmin, nuevoCtl: nuevoCtl,
-  nuevoObjetivo: nuevoObjetivo, verificar: verificar, esperar: esperar, pausa: pausa, leerAlerts: leerAlerts, alertasActivas: alertasActivas,
+  nuevoObjetivo: nuevoObjetivo, verificar: verificar, esperar: esperar, pausa: pausa, leerAlerts: leerAlerts, alertasActivas: alertasActivas, alertasActivasV2: alertasActivasV2,
   archivos: archivos, limpiar: limpiar, parar: parar, login: login, ADMIN: ADMIN, ADMIN_PASS: ADMIN_PASS, TOKEN: TOKEN, TOKEN_ENV: TOKEN_ENV, CHAT: CHAT, R: simMod.R,
   updMessage: simMod.updMessage };

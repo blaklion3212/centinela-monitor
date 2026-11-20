@@ -16,8 +16,15 @@ var MAL_TOKEN = '123456789:AAH_abcdefghijklmnopqrstuvwxyz012345';
 
 function cfg(o) {
   return Object.assign({ enabled: false, blockedByEnv: false, tokenConfigured: true, tokenHint: '…2345', tokenSource: 'panel', chatId: '-1001234567890',
-    orgChats: {}, detail: 'minimal', failsBeforeAlert: 2, notifyRecovery: true, notifyDegraded: false, version: 1 }, o || {});
+    orgChats: {}, detail: 'minimal', failsBeforeAlert: 2, notify: Object.assign({}, NOTIFY_DEF, (o && o.notify) || {}),
+    notifyRecovery: true, notifyDegraded: false, version: 2 }, o || {}, { notify: Object.assign({}, NOTIFY_DEF, (o && o.notify) || {}) });
 }
+// Las 9 casillas de «Qué avisar» (RT-50), en el orden de la sección 3, con su rótulo y su valor por defecto (RT-22).
+var NOTIFY_DEF = { down: true, recovery: true, certExpired: true, certExpiring: false, certTrust: false, latency: false, resources: false, disk: false, other: false };
+var CASILLAS = [['down', 'Caída'], ['recovery', 'Recuperación'], ['certExpired', 'Certificado vencido'], ['certExpiring', 'Certificado por vencer'],
+  ['certTrust', 'Certificado no confiable'], ['latency', 'Alta latencia o pérdida'], ['resources', 'Recursos del servidor'],
+  ['disk', 'Espacio en disco'], ['other', 'Otras degradaciones']];
+function casilla(u, clave) { var c = u.q('[data-notify="' + clave + '"]'); assert.ok(c, 'no hay casilla ' + clave); return c; }
 function sinConfigurar(o) { return cfg(Object.assign({ tokenConfigured: false, tokenHint: '', tokenSource: 'none', chatId: '' }, o || {})); }
 function estado(o) {
   return Object.assign({ state: 'off', lastSentAt: null, lastError: null, queued: 0, inWindow: 0, sentTotal: 0, failedTotal: 0, droppedTotal: 0, tokenSource: 'panel', note: '' }, o || {});
@@ -112,7 +119,7 @@ test('Control del DOM de prueba: un <img onerror> sin escapar se ve como element
  * Controles y accesibilidad (RA-61, RA-64)
  * ========================================================================================== */
 
-test('RA-61 contenido de la sección: interruptor, token, chat, detalle, N, recuperación, degradado, prueba y estado', async function () {
+test('RA-61/RT-50 contenido de la sección: interruptor, token, chat, detalle, N, panel «Qué avisar» (9 casillas), prueba y estado', async function () {
   var u = await montar();
   assert.ok(u.el.hasAttribute('data-alerts'), 'contenedor con data-alerts');
   assert.ok(u.llamadas('GET /api/alerts').length === 1 && u.llamadas('GET /api/alerts/status').length === 1, 'carga configuración y estado');
@@ -128,8 +135,20 @@ test('RA-61 contenido de la sección: interruptor, token, chat, detalle, N, recu
   assert.deepStrictEqual(det, ['minimal:Mínimo:true', 'full:Completo:false']);
   var n = inputDe(u, 'Avisar tras N fallos seguidos');
   assert.strictEqual(n.getAttribute('type'), 'number'); assert.strictEqual(n.getAttribute('min'), '1'); assert.strictEqual(n.getAttribute('max'), '10'); assert.strictEqual(n.value, '2');
-  assert.strictEqual(inputDe(u, 'Avisar de recuperaciones').checked, true);
-  assert.strictEqual(inputDe(u, 'Avisar también de DEGRADADO').checked, false);
+  // Antes: casillas «Avisar de recuperaciones» y «Avisar también de DEGRADADO». Ahora: fieldset «Qué avisar» con 9 casillas (RT-50).
+  var fs9 = u.q('fieldset[data-notify-set]');
+  assert.ok(fs9 && /Qué avisar/.test(fs9.querySelector('legend').textContent), 'fieldset con legend «Qué avisar»');
+  var cas = u.qa('[data-notify]');
+  assert.deepStrictEqual(cas.map(function (c) { return c.getAttribute('data-notify'); }), CASILLAS.map(function (c) { return c[0]; }), 'las 9 casillas, en orden');
+  cas.forEach(function (c) { assert.strictEqual(c.getAttribute('type'), 'checkbox'); assert.ok(/\bn-[A-Za-z]+$/.test(c.getAttribute('id')), 'id <id>n-<clave>: ' + c.getAttribute('id')); });
+  CASILLAS.forEach(function (c) {
+    assert.ok(inputDe(u, c[1]), 'label «' + c[1] + '»');
+    assert.strictEqual(casilla(u, c[0]).checked, NOTIFY_DEF[c[0]], c[0] + ' con su valor por defecto');
+  });
+  assert.strictEqual(u.qa('label').filter(function (l) { return /Avisar de recuperaciones|Avisar también de DEGRADADO/.test(l.textContent); }).length, 0, 'las casillas antiguas ya no existen');
+  assert.ok(!u.q('[id$="recovery"]') && !u.q('[id$="degraded"]'), 'sin ids antiguos #<id>recovery / #<id>degraded');
+  var aviso = u.q('[data-none-warning]');
+  assert.ok(aviso && aviso.getAttribute('role') === 'status' && aviso.textContent.trim() === '', 'aviso «ninguno» en región status, vacío si hay alguna casilla');
   assert.ok(/Guardar/.test(u.q('[data-save]').textContent));
   assert.ok(/Enviar mensaje de prueba/.test(u.q('[data-test]').textContent));
   assert.ok(u.q('[data-status] [data-state]'), 'indicador de estado');
@@ -138,21 +157,21 @@ test('RA-61 contenido de la sección: interruptor, token, chat, detalle, N, recu
   assert.ok(!/organizaci[óo]n/i.test(u.qa('label').map(function (l) { return l.textContent; }).join(' ')), 'sin selector de chat por organización');
 });
 
-test('RA-61 los valores guardados se reflejan en el formulario (activado, completo, N, recuperación y degradado)', async function () {
-  var u = await montar({ routes: { 'GET /api/alerts': cfg({ enabled: true, detail: 'full', failsBeforeAlert: 5, notifyRecovery: false, notifyDegraded: true }) } });
+test('RA-61/RT-50 los valores guardados se reflejan en el formulario (activado, completo, N y las casillas de notify)', async function () {
+  var u = await montar({ routes: { 'GET /api/alerts': cfg({ enabled: true, detail: 'full', failsBeforeAlert: 5, notify: { recovery: false, latency: true, disk: true, down: false } }) } });
   assert.strictEqual(inputDe(u, 'Enviar alertas por Telegram').checked, true);
   assert.strictEqual(u.q('[data-detail="full"]').getAttribute('aria-pressed'), 'true');
   assert.strictEqual(inputDe(u, 'Avisar tras N fallos seguidos').value, '5');
-  assert.strictEqual(inputDe(u, 'Avisar de recuperaciones').checked, false);
-  assert.strictEqual(inputDe(u, 'Avisar también de DEGRADADO').checked, true);
+  var esperado = Object.assign({}, NOTIFY_DEF, { recovery: false, latency: true, disk: true, down: false });
+  CASILLAS.forEach(function (c) { assert.strictEqual(casilla(u, c[0]).checked, esperado[c[0]], c[0]); });
 });
 
-test('RA-64 cada campo tiene una label asociada y los iconos de ayuda son botones con aria-label y región que los describe', async function () {
+test('RA-64/RT-51 cada campo tiene una label asociada y los iconos de ayuda son botones con aria-label y región que los describe', async function () {
   var u = await montar();
-  ['Enviar alertas por Telegram', 'Token del bot', 'Chat de destino', 'Avisar tras N fallos seguidos', 'Esperar antes de enviar', 'Avisar de recuperaciones', 'Avisar también de DEGRADADO']
-    .forEach(function (r) { assert.ok(inputDe(u, r)); });
+  ['Enviar alertas por Telegram', 'Token del bot', 'Chat de destino', 'Avisar tras N fallos seguidos', 'Esperar antes de enviar']
+    .concat(CASILLAS.map(function (c) { return c[1]; })).forEach(function (r) { assert.ok(inputDe(u, r), r); });
   var ayudas = u.qa('[data-help-for]');
-  assert.deepStrictEqual(ayudas.map(function (b) { return b.getAttribute('data-help-for'); }).sort(), ['chat', 'degraded', 'detail', 'enabled', 'fails', 'recovery', 'token', 'wait']);
+  assert.deepStrictEqual(ayudas.map(function (b) { return b.getAttribute('data-help-for'); }).sort(), ['chat', 'detail', 'enabled', 'fails', 'token', 'wait'].concat(CASILLAS.map(function (c) { return 'n-' + c[0]; })).sort());
   ayudas.forEach(function (b) {
     assert.strictEqual(b.tag, 'button'); assert.strictEqual(b.getAttribute('type'), 'button');
     assert.ok(/^Ayuda: /.test(b.getAttribute('aria-label') || ''), 'aria-label');
@@ -274,21 +293,25 @@ test('RA-20 borrar token sin confirmar no envía nada', async function () {
  * Guardar ajustes (RA-12, RA-61, RA-63)
  * ========================================================================================== */
 
-test('RA-61 Guardar envía todos los campos editables con sus tipos y refleja la respuesta del servidor', async function () {
-  var guardada = cfg({ enabled: true, detail: 'full', failsBeforeAlert: 4, notifyRecovery: false, notifyDegraded: true, chatId: '@mi_canal' });
+test('RA-61/RT-50 Guardar envía todos los campos editables con sus tipos (notify con 9 booleanos) y refleja la respuesta del servidor', async function () {
+  var guardada = cfg({ enabled: true, detail: 'full', failsBeforeAlert: 4, notify: { recovery: false, latency: true }, chatId: '@mi_canal' });
   var u = await montar({ routes: { 'PUT /api/alerts': guardada } });
   inputDe(u, 'Enviar alertas por Telegram').checked = true;
   inputDe(u, 'Chat de destino').value = '  @mi_canal ';
   D.click(u.q('[data-detail="full"]'));
   inputDe(u, 'Avisar tras N fallos seguidos').value = '4';
   inputDe(u, 'Esperar antes de enviar').value = '10';
-  inputDe(u, 'Avisar de recuperaciones').checked = false;
-  inputDe(u, 'Avisar también de DEGRADADO').checked = true;
+  casilla(u, 'recovery').checked = false;
+  casilla(u, 'latency').checked = true;
   D.click(u.q('[data-save]'));
   await D.settle();
   var c = u.llamadas('PUT /api/alerts');
   assert.strictEqual(c.length, 1);
-  assert.deepStrictEqual(c[0].body, { enabled: true, chatId: '@mi_canal', detail: 'full', failsBeforeAlert: 4, groupWindowSec: 10, notifyRecovery: false, notifyDegraded: true });
+  assert.deepStrictEqual(c[0].body, { enabled: true, chatId: '@mi_canal', detail: 'full', failsBeforeAlert: 4, groupWindowSec: 10,
+    notify: Object.assign({}, NOTIFY_DEF, { recovery: false, latency: true }) });
+  assert.ok(!('notifyRecovery' in c[0].body) && !('notifyDegraded' in c[0].body), 'ya no se envían los campos antiguos');
+  assert.strictEqual(Object.keys(c[0].body.notify).length, 9);
+  Object.keys(c[0].body.notify).forEach(function (k) { assert.strictEqual(typeof c[0].body.notify[k], 'boolean', k); });
   assert.ok(u.toasts.some(function (t) { return /Alertas guardadas/.test(t.msg); }));
   assert.strictEqual(u.q('[data-detail="full"]').getAttribute('aria-pressed'), 'true');
   assert.strictEqual(u.q('[data-detail="minimal"]').getAttribute('aria-pressed'), 'false');

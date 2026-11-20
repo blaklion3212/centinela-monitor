@@ -84,8 +84,11 @@ function fakeTargets() {
 }
 
 function baseCfg(over) {
-  return Object.assign(JSON.parse(JSON.stringify(cfgMod.DEFAULTS)),
+  var c = Object.assign(JSON.parse(JSON.stringify(cfgMod.DEFAULTS)),
     { enabled: true, token: TOKEN, chatId: '-100111', failsBeforeAlert: 2 }, over || {});
+  // `notify` parcial (p. ej. { latency: true }) se completa con los valores por defecto de las 9 casillas.
+  c.notify = Object.assign({}, cfgMod.DEFAULTS.notify, (over && over.notify) || {});
+  return c;
 }
 
 /*
@@ -115,8 +118,23 @@ function harness(opts) {
   var h = { clock: clock, chan: chan, sched: sched, store: store, disk: disk, logs: logs, env: env };
   h.notifier = build();
   if (!opts.noStart) h.notifier.start(sched);
+  // Motivos por defecto según el estado (contrato 2.5.0):
+  //   up       -> sin motivos;
+  //   degraded -> un motivo de latencia crítica, sin `down` (clasifica como tipo `latency`; con `warn` sería `other`);
+  //   down     -> un motivo con `down: true` (clasifica como tipo `down`).
+  // Para emitir motivos concretos: h.emit(id, status, { reasons: [ H.reason(...) ] }).
+  function defaultReasons(status) {
+    if (status === 'up') return [];
+    if (status === 'degraded') return [{ level: 'crit', text: 'latencia alta', down: false, code: 'latency' }];
+    return [{ level: 'crit', text: 'sin respuesta', down: true }];
+  }
   h.emit = function (id, status, extra) {
-    sched.emit('result', Object.assign({ id: id, ts: clock.now(), status: status, reasons: status === 'up' ? [] : [{ level: 'crit', text: 'sin respuesta', down: true }] }, extra || {}));
+    // `ping` medible por omisión: la latencia cuenta como medida y puede recuperarse (RT-15); pásalo en `extra` para cambiarlo.
+    sched.emit('result', Object.assign({ id: id, ts: clock.now(), status: status, reasons: defaultReasons(status), ping: { received: 4 } }, extra || {}));
+  };
+  // Emite un resultado con el estado y los motivos dados (atajo de emit con `reasons`).
+  h.emitReasons = function (id, status, reasons, extra) {
+    h.emit(id, status, Object.assign({ reasons: reasons }, extra || {}));
   };
   h.down = function (id) { h.emit(id || 't1', 'down'); };
   h.up = function (id) { h.emit(id || 't1', 'up'); };
@@ -130,5 +148,10 @@ function harness(opts) {
   return h;
 }
 
-module.exports = { harness: harness, fakeClock: fakeClock, fakeChannel: fakeChannel, fakeTargets: fakeTargets, baseCfg: baseCfg, TOKEN: TOKEN,
+// Construye un motivo del evaluador: reason('crit', 'latency', { text: '...', sub: '/' }).
+function reason(level, code, o) {
+  return Object.assign({ level: level, code: code, down: false, text: 'motivo ' + code }, o || {});
+}
+
+module.exports = { harness: harness, reason: reason, fakeClock: fakeClock, fakeChannel: fakeChannel, fakeTargets: fakeTargets, baseCfg: baseCfg, TOKEN: TOKEN,
   TOKEN_ENV: TOKEN_ENV, flush: flush };

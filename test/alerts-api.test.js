@@ -204,7 +204,7 @@ test('RA-05 / RA-55 operador y lector: /api/state, /api/settings y /api/stream n
  * Configuración (RA-01, RA-02, RA-10, RA-12, RA-13, RA-14, RA-51)
  * ========================================================================================== */
 
-test('RA-01 / RA-51 sin alerts.json: GET devuelve los valores por defecto sin token, el servidor no abre conexiones y no crea el archivo', async function () {
+test('RA-01 / RA-51 / RT-41 sin alerts.json: GET devuelve los valores por defecto sin token, el servidor no abre conexiones y no crea el archivo', async function () {
   var sim = await A.nuevoSim();
   var h = await A.arrancar({ sim: sim });
   var r = await h.api('GET', '/api/alerts');
@@ -212,8 +212,11 @@ test('RA-01 / RA-51 sin alerts.json: GET devuelve los valores por defecto sin to
   var j = r.json;
   assert.strictEqual(j.enabled, false); assert.strictEqual(j.tokenConfigured, false); assert.strictEqual(j.tokenSource, 'none'); assert.strictEqual(j.tokenHint, '');
   assert.strictEqual(j.chatId, ''); assert.deepStrictEqual(j.orgChats, {}); assert.strictEqual(j.detail, 'minimal');
-  assert.strictEqual(j.failsBeforeAlert, 2); assert.strictEqual(j.notifyRecovery, true); assert.strictEqual(j.notifyDegraded, false);
-  assert.strictEqual(j.blockedByEnv, false); assert.strictEqual(j.version, 1);
+  assert.strictEqual(j.failsBeforeAlert, 2);
+  assert.deepStrictEqual(j.notify, { down: true, recovery: true, certExpired: true, certExpiring: false, certTrust: false,
+    latency: false, resources: false, disk: false, other: false }, 'notify completo con los valores por defecto (RT-41)');
+  assert.strictEqual(j.notifyRecovery, true, 'compatibilidad: = notify.recovery'); assert.strictEqual(j.notifyDegraded, false, 'compatibilidad: false si falta algún tipo de degradación');
+  assert.strictEqual(j.blockedByEnv, false); assert.strictEqual(j.version, 2);
   assert.strictEqual('token' in j, false); assert.strictEqual('alerted' in j, false);
   var s = await h.api('GET', '/api/alerts/status');
   assert.strictEqual(s.status, 200); assert.strictEqual(s.json.state, 'off');
@@ -285,11 +288,11 @@ test('RA-14 el directorio de datos conserva modo restrictivo (0700) al crear ale
   assert.strictEqual(fs.statSync(path.join(h.dir, 'alerts.json')).mode & 0o077, 0, 'sin permisos para grupo ni otros');
 });
 
-test('RA-12 PUT inválido: 400 con { errors: [..] } en español y no guarda nada (todo o nada)', async function () {
+test('RA-12 / RT-42 PUT inválido: 400 con { errors: [..] } en español y no guarda nada (todo o nada)', async function () {
   var sim = await A.nuevoSim();
   var h = await A.arrancar({ sim: sim });
   var antes = (await h.api('GET', '/api/alerts')).json;
-  var casos = [{ failsBeforeAlert: 0 }, { failsBeforeAlert: 11 }, { failsBeforeAlert: 'dos' }, { detail: 'enorme' }, { enabled: 'si' }, { notifyDegraded: 5 },
+  var casos = [{ failsBeforeAlert: 0 }, { failsBeforeAlert: 11 }, { failsBeforeAlert: 'dos' }, { detail: 'enorme' }, { enabled: 'si' }, { notifyDegraded: 5 }, { notify: 'todo' }, { notify: { down: 'sí' } }, { notify: { inventada: true } },
     { chatId: 'no-es-un-chat' }, { chatId: 123 }, { detail: 'full', failsBeforeAlert: 99 }];
   for (var b of casos) {
     var r = await h.api('PUT', '/api/alerts', b);
@@ -299,21 +302,54 @@ test('RA-12 PUT inválido: 400 con { errors: [..] } en español y no guarda nada
   }
 });
 
-test('RA-12 PUT válido guarda todos los campos editables; claves desconocidas y token del cuerpo se ignoran', async function () {
+test('RA-12 / RT-42 PUT válido guarda todos los campos editables (incluido notify); claves desconocidas y token del cuerpo se ignoran', async function () {
   var sim = await A.nuevoSim();
   var h = await A.arrancar({ sim: sim });
   await h.api('PUT', '/api/alerts/token', { token: TOKEN });
-  var r = await h.api('PUT', '/api/alerts', { detail: 'full', failsBeforeAlert: 5, notifyRecovery: false, notifyDegraded: true, chatId: '@mi_canal_ti',
+  var r = await h.api('PUT', '/api/alerts', { detail: 'full', failsBeforeAlert: 5, notify: { recovery: false, latency: true, disk: true }, chatId: '@mi_canal_ti',
     foo: 'bar', token: '999999999:ZZZ_abcdefghijklmnopqrstuvwxyz000000', alerted: { x: 'down' }, version: 7 });
   assert.strictEqual(r.status, 200, r.text);
-  assert.strictEqual(r.json.detail, 'full'); assert.strictEqual(r.json.failsBeforeAlert, 5); assert.strictEqual(r.json.notifyRecovery, false);
-  assert.strictEqual(r.json.notifyDegraded, true); assert.strictEqual(r.json.chatId, '@mi_canal_ti');
+  assert.strictEqual(r.json.detail, 'full'); assert.strictEqual(r.json.failsBeforeAlert, 5);
+  assert.deepStrictEqual(r.json.notify, { down: true, recovery: false, certExpired: true, certExpiring: false, certTrust: false,
+    latency: true, resources: false, disk: true, other: false }, 'notify parcial fusionado con el vigente');
+  assert.strictEqual(r.json.notifyRecovery, false); assert.strictEqual(r.json.notifyDegraded, false, 'faltan tipos de degradación: no es «todos»');
+  assert.strictEqual(r.json.chatId, '@mi_canal_ti');
   assert.strictEqual('foo' in r.json, false);
   var d = A.leerAlerts(h.dir);
   assert.strictEqual('foo' in d, false);
   assert.strictEqual(d.token, TOKEN, 'el PUT general no cambia el token');
-  assert.deepStrictEqual(d.alerted, {}); assert.strictEqual(d.version, 1);
+  assert.deepStrictEqual(d.alerted, {}); assert.strictEqual(d.version, 2);
+  assert.deepStrictEqual(d.notify, r.json.notify, 'lo guardado en disco coincide con lo devuelto (RT-40)');
+  assert.strictEqual('notifyRecovery' in d, false); assert.strictEqual('notifyDegraded' in d, false);
   assert.strictEqual(r.json.tokenHint, '…2345');
+});
+
+test('RT-42 PUT con los campos antiguos notifyRecovery/notifyDegraded se traduce a notify; si viene notify mandan los de notify', async function () {
+  var sim = await A.nuevoSim();
+  var h = await A.arrancar({ sim: sim });
+  var r = await h.api('PUT', '/api/alerts', { notifyRecovery: false, notifyDegraded: true });
+  assert.strictEqual(r.status, 200, r.text);
+  assert.strictEqual(r.json.notify.recovery, false);
+  ['certExpiring', 'certTrust', 'latency', 'resources', 'disk', 'other'].forEach(function (k) { assert.strictEqual(r.json.notify[k], true, k); });
+  assert.strictEqual(r.json.notifyDegraded, true);
+  var q = await h.api('PUT', '/api/alerts', { notify: { latency: false }, notifyDegraded: true, notifyRecovery: true });
+  assert.strictEqual(q.status, 200, q.text);
+  assert.strictEqual(q.json.notify.latency, false, 'notify manda sobre los campos antiguos');
+  assert.strictEqual(q.json.notify.recovery, false, 'notifyRecovery se ignora si viene notify');
+  assert.strictEqual(q.json.notifyDegraded, false);
+  var d = A.leerAlerts(h.dir);
+  assert.deepStrictEqual(d.notify, q.json.notify);
+});
+
+test('RT-42 PUT con todos los tipos en false es válido (no es error) y no envía nada', async function () {
+  var sim = await A.nuevoSim();
+  var h = await A.arrancar({ sim: sim });
+  var todos = {};
+  ['down', 'recovery', 'certExpired', 'certExpiring', 'certTrust', 'latency', 'resources', 'disk', 'other'].forEach(function (k) { todos[k] = false; });
+  var r = await h.api('PUT', '/api/alerts', { notify: todos });
+  assert.strictEqual(r.status, 200, r.text);
+  assert.deepStrictEqual(r.json.notify, todos);
+  assert.strictEqual(sim.requests.length, 0);
 });
 
 test('RA-10 orgChats con alguna clave en el PUT: 400 «Los chats por organización aún no están disponibles»; vacío o ausente es válido', async function () {

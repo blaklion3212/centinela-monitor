@@ -117,6 +117,21 @@ Solo documentación del ajuste nuevo «Esperar antes de enviar». Los metadatos 
 | guia-uso.md, 11.2 y 11.3 | Fila de opción nueva, agrupación sin «30 segundos» fijos, viñeta «Cuánto tarda en llegar» con el ejemplo. | Ídem. |
 | guia-uso.md, 11.5 | Fila nueva «El aviso tarda en llegar». | Ídem. |
 
+## Tipos de alerta (versión 2.5.0, 19 de noviembre de 2026)
+
+Documentación del panel «Qué avisar» (versión 2.5.0, aún sin publicar). Los metadatos de versión de los manuales no cambian (siguen en 2.4.0) y los PDF no se regeneran aún. Pendiente: la captura `img/alertas-02.jpg` debe regenerarse con el panel nuevo (mismo nombre de archivo; el marcador ya apunta a ella y su texto alternativo describe el panel «Qué avisar»).
+
+| Documento y sección | Qué cambió | Por qué (fuente) |
+|---|---|---|
+| manual.md, 19 (introducción y 19.2) | La introducción menciona los tipos de aviso; el paso 6 manda a elegir «Qué avisar» antes de activar; texto alternativo de `alertas-02.jpg` actualizado. | `js/views/alerts.js`. |
+| manual.md, 19.4 | Se quitan las filas «Avisar de recuperaciones» y «Avisar también de DEGRADADO»; fila «Qué avisar»; subsección nueva «Qué avisar» con los nueve tipos, qué dispara cada uno, umbrales de Ajustes que usa (8.2), valores por defecto, requisito de agente y aviso «Ningún tipo seleccionado». No se renumeró: va como `###` dentro de 19.4. | `server/lib/alert-types.js`, `server/lib/alerts-config.js`, `js/views/alerts.js`, `js/config/defaults.js`. |
+| manual.md, 19.5 | Reglas generalizadas (N fallos, un aviso por problema, recuperación, reinicio, desactivar). Subsección nueva «Mensajes por tipo» (icono y etiqueta, recuperación, Mínimo y Completo). Subsección nueva «Reglas de cada tipo de aviso» (escalado, histéresis del disco, certificado vencido frente a caída, certificado renovado, «RECUPERADO», DNS y tiempo agotado, agente sin respuesta). Subsección nueva «Actualizar desde la 2.4.0 (y volver atrás)». Limpieza de caracteres invisibles. | `server/lib/notify.js`, `server/lib/alert-types.js`, `server/lib/alerts-config.js`. |
+| manual.md, 19.11 | Filas actualizadas («No llega el aviso…», «No llega la recuperación», «Llegan muchos avisos», «Nada llega tras reiniciar») y nuevas (disco o CPU, certificado vencido, corte de DNS, «Ningún tipo seleccionado»). | Código citado arriba. |
+| manual.md, 13.1, 13.3 y 17 | `alerts.json` guarda `notify` y los problemas avisados; `GET/PUT /api/alerts` con `notify` parcial, errores 400, compatibilidad con `notifyRecovery` y `notifyDegraded`, `version: 2`; `GET /api/alerts/status` con `activeByType`; la limitación de «solo avisa de cambios de estado» se reescribe. | `server/lib/alerts-config.js`, `server/lib/notify.js`, `server/server.js`. |
+| guia-uso.md, 11 | Introducción, paso 6 y texto alternativo de la captura; opciones con la subsección «Qué avisar» (casillas y valores por defecto); 11.3 con tabla de mensajes y reglas en lenguaje sencillo, y «Si vienes de la versión 2.4.0»; 11.5 con filas nuevas. | Ídem. |
+| requisitos/alertas.md, arquitectura-alertas.md, alertas-tipos.md | Notas de sustitución parcial (RA-12, RA-40 a RA-44, RA-61) y estado «aprobado e implementado (pendiente de publicar)». | `alertas-tipos.md`, sección 4.10 (RT-70). |
+| CHANGELOG.md, README.md | Entrada «Sin publicar» (Agregado, Cambiado, Seguridad) y una línea en README. | Ídem. |
+
 ## Paso a paso del contenedor (versión 2.3.0)
 
 Solo documentación; sin cambios de código ni de `compose.yml`. No se renumeró nada: las secciones 14.1 a 14.6 conservan su número y se añaden dos al final.

@@ -1,5 +1,7 @@
 # Requisitos: alertas opcionales por Telegram (versión 2.3.0)
 
+> **Nota (versión 2.5.0):** este documento queda sustituido parcialmente por [alertas-tipos.md](alertas-tipos.md). Dejan de regir **RA-12** (campos `notifyRecovery` y `notifyDegraded`, ahora `notify`), **RA-40 a RA-44** (decisión de avisos por estado global del objetivo y el campo `alerted`, ahora por tipo y clave) y **RA-61** (las casillas «Avisar de recuperaciones» y «Avisar también de DEGRADADO», ahora el panel «Qué avisar»). El resto sigue vigente. Se conserva el texto original como historia de la 2.3.0 y la 2.4.0.
+
 **Estado:** borrador para revisión del orquestador y aprobación del usuario.
 **Fecha:** 2026-11-19
 **Fuentes:** [plan-alertas.md](../plan-alertas.md) (secciones 2, 3 y 5), [propuesta-alertas-telegram.md](../propuesta-alertas-telegram.md), `server/lib/scheduler.js`, `server/server.js` (router declarativo y `api()`), `server/lib/validate.js`, `server/lib/store.js`, `js/views/settings.js`.

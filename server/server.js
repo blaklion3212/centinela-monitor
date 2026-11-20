@@ -81,7 +81,8 @@ if (/^\d{1,5}$/.test(String(process.env.CENTINELA_ALERTS_GROUP_WINDOW_MS || '').
   notifyConsts.GROUP_WINDOW_MS = Math.min(60000, parseInt(process.env.CENTINELA_ALERTS_GROUP_WINDOW_MS, 10));
 }
 var notifier = notify.create({ store: store, alertsStore: alertsStore, channel: tgChannel, env: process.env,
-  version: pkg.version, consts: notifyConsts, chatsFromUpdates: telegram.chatsFromUpdates });
+  version: pkg.version, consts: notifyConsts, chatsFromUpdates: telegram.chatsFromUpdates,
+  thresholds: function () { return store.getSettings().thresholds; } });
 var clients = new Map();       // res -> { sid, key, user, ka } (flujos SSE abiertos; el Map conserva el orden de apertura)
 // Topes de flujos SSE: por clave (sid con auth activa; IP con auth off), por usuario (o IP con auth off) y global.
 // Al superar uno de los dos primeros se cierra el flujo MÁS ANTIGUO; solo el global rechaza con 429.
@@ -564,7 +565,10 @@ async function hAlertsPut(c) {
   notifier.reload();
   if (!!fresh.enabled !== !!next.enabled) alertsLog(c, next.enabled ? 'activadas' : 'desactivadas');
   // RA-14: todo guardado deja rastro; solo los nombres de los campos cambiados, sin valores.
-  var changed = ['chatId', 'detail', 'failsBeforeAlert', 'notifyRecovery', 'notifyDegraded'].filter(function (k) { return fresh[k] !== next[k]; });
+  var changed = ['chatId', 'detail', 'failsBeforeAlert'].filter(function (k) { return fresh[k] !== next[k]; });
+  // Tipos de «Qué avisar» que cambiaron: solo nombres de tipo, nunca objetivos ni particiones.
+  var types = alertsCfg.NOTIFY_KEYS.filter(function (k) { return !!(fresh.notify && fresh.notify[k]) !== !!(next.notify && next.notify[k]); });
+  if (types.length) changed.push('tipos: ' + types.join(', '));
   alertsLog(c, 'ajustes guardados' + (changed.length ? ' (' + changed.join(', ') + ')' : ' sin cambios'));
   return sendJson(c.res, 200, alertsCfg.publicView(next, process.env));
 }

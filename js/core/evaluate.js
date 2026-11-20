@@ -45,7 +45,12 @@
     var c = target.checks || {};
     var reasons = [];
     var seen = false; // ¿hubo algún dato medido?
-    function add(level, text, down, code) { reasons.push({ level: level, text: text, down: !!down, code: code || '' }); }
+    // `sub` es opcional (ssl: expired|expiring|unreadable; disk: punto de montaje); solo se añade si se indica.
+    function add(level, text, down, code, sub) {
+      var o = { level: level, text: text, down: !!down, code: code || '' };
+      if (sub !== undefined) o.sub = sub;
+      reasons.push(o);
+    }
     function n(v, d) { return typeof v === 'number' ? Math.round(v * (d || 1)) / (d || 1) : v; }
 
     // DNS
@@ -106,11 +111,11 @@
     if (r.ssl) {
       seen = true;
       var s = r.ssl;
-      if (s.error) add('warn', 'No se pudo leer el certificado (' + s.error + ')', false, 'ssl');
+      if (s.error) add('warn', 'No se pudo leer el certificado (' + s.error + ')', false, 'ssl', 'unreadable');
       else {
-        if (s.daysLeft < 0) add('crit', 'Certificado vencido hace ' + Math.abs(s.daysLeft) + ' días', true, 'ssl');
-        else if (s.daysLeft <= th.sslCritDays) add('crit', 'Certificado vence en ' + s.daysLeft + ' días', false, 'ssl');
-        else if (s.daysLeft <= th.sslWarnDays) add('warn', 'Certificado vence en ' + s.daysLeft + ' días', false, 'ssl');
+        if (s.daysLeft < 0) add('crit', 'Certificado vencido hace ' + Math.abs(s.daysLeft) + ' días', true, 'ssl', 'expired');
+        else if (s.daysLeft <= th.sslCritDays) add('crit', 'Certificado vence en ' + s.daysLeft + ' días', false, 'ssl', 'expiring');
+        else if (s.daysLeft <= th.sslWarnDays) add('warn', 'Certificado vence en ' + s.daysLeft + ' días', false, 'ssl', 'expiring');
         if (s.authorized === false) add('warn', 'Certificado no confiable: ' + (s.authError || 'cadena inválida'), false, 'ssl-trust');
       }
     }
@@ -130,8 +135,8 @@
         if (io >= th.ioWaitCritPct) add('crit', 'I/O wait ' + Math.round(io) + ' % (disco lento)', false, 'io');
         else if (io >= th.ioWaitWarnPct) add('warn', 'I/O wait ' + Math.round(io) + ' %', false, 'io');
         (a.disks || []).forEach(function (d) {
-          if (d.usedPct >= th.diskCritPct) add('crit', 'Disco ' + d.mount + ' al ' + Math.round(d.usedPct) + ' %', false, 'disk');
-          else if (d.usedPct >= th.diskWarnPct) add('warn', 'Disco ' + d.mount + ' al ' + Math.round(d.usedPct) + ' %', false, 'disk');
+          if (d.usedPct >= th.diskCritPct) add('crit', 'Disco ' + d.mount + ' al ' + Math.round(d.usedPct) + ' %', false, 'disk', d.mount);
+          else if (d.usedPct >= th.diskWarnPct) add('warn', 'Disco ' + d.mount + ' al ' + Math.round(d.usedPct) + ' %', false, 'disk', d.mount);
         });
         (a.services || []).forEach(function (sv) {
           if (!sv.active) add('crit', 'Servicio ' + sv.name + ' detenido', true, 'service');

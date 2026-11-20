@@ -1,5 +1,7 @@
 # Arquitectura: alertas opcionales por Telegram (2.3.0)
 
+> **Nota (versión 2.5.0):** la decisión de avisos y el estado avisado (`alerted`) descritos aquí fueron sustituidos por una decisión por tipo de alerta. Consulta [arquitectura-alertas-tipos.md](arquitectura-alertas-tipos.md) (requisitos en [alertas-tipos.md](alertas-tipos.md)). El resto (cola, agrupación, reintentos, canal) sigue vigente.
+
 **Fecha:** 2026-11-19
 **Requisitos:** [alertas.md](alertas.md). Cada `RA-nn` citado aquí está definido allí.
 

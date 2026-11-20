@@ -6,7 +6,8 @@
  * (o en la variable CENTINELA_TELEGRAM_TOKEN) y nunca sale en publicView.
  */
 var FILE = 'alerts.json';
-var VERSION = 1;
+var VERSION = 2;
+var AT = require('./alert-types');
 
 var TOKEN_RE = /^[1-9]\d{0,17}:[A-Za-z0-9_-]{30,}$/; // mismo criterio que el canal: solo letras, dígitos, _ y -
 var CHAT_USER_RE = /^@[A-Za-z][A-Za-z0-9_]{4,31}$/;
@@ -16,6 +17,11 @@ var CHAT_MAX = 1099511627775;
 var ORG_ID_RE = /^[a-z0-9]{1,32}$/;
 var TARGET_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 var MAX_ALERTED = 5000;
+var MAX_ALERTED_PER_TARGET = 64;
+var MAX_SUB_ENCODED = 200;
+var ALERTED_LEVELS = ['on', 'warn', 'crit'];
+// Subclaves válidas por tipo: latency y resources solo admiten sus códigos.
+var SUB_CODES = { latency: ['latency', 'loss', 'jitter', 'ttfb'], resources: ['cpu', 'mem', 'io'] };
 
 // Esperas permitidas (s) para agrupar avisos antes de enviarlos; 0 envía en cuanto se detecta el cambio.
 var GROUP_WINDOWS = [0, 10, 30, 60];
@@ -29,8 +35,7 @@ var DEFAULTS = {
   detail: 'minimal',
   failsBeforeAlert: 2,
   groupWindowSec: 30,
-  notifyRecovery: true,
-  notifyDegraded: false,
+  notify: AT.DEFAULT_NOTIFY,
   alerted: {}
 };
 
@@ -92,6 +97,53 @@ function effectiveOn(cfg, env) {
 
 /* ---- saneado tolerante (al cargar) ---- */
 
+// notify: si falta o no es objeto se migra desde notifyRecovery/notifyDegraded de 2.4.0 (RT-22).
+function sanitizeNotify(src) {
+  var out = {};
+  if (isObj(src.notify)) {
+    AT.NOTIFY_KEYS.forEach(function (k) { out[k] = typeof src.notify[k] === 'boolean' ? src.notify[k] : AT.DEFAULT_NOTIFY[k]; });
+    return out;
+  }
+  AT.NOTIFY_KEYS.forEach(function (k) { out[k] = AT.DEFAULT_NOTIFY[k]; });
+  if (typeof src.notifyRecovery === 'boolean') out.recovery = src.notifyRecovery;
+  AT.DEGRADE_TYPES.forEach(function (k) { out[k] = src.notifyDegraded === true; });
+  return out;
+}
+
+// Una clave de alerted ya validada -> [clave, nivel] o null. Acepta el formato antiguo {id: 'down'|'degraded'} (RT-23).
+function alertedEntry(k, v) {
+  if (k === '__proto__') return null;
+  if (TARGET_ID_RE.test(k)) {
+    if (v === 'down') return [k + '|down', 'm']; // 'm' = migrado de 2.4.0 (solo válido en el tipo down)
+    if (v === 'degraded') return [k + '|legacy', 'on'];
+    return null;
+  }
+  var p = AT.parseKey(k);
+  if (!p || p.id === '__proto__' || !TARGET_ID_RE.test(p.id)) return null;
+  if (p.type !== 'legacy' && AT.TYPES.indexOf(p.type) < 0) return null;
+  // Clave canónica: la subclave debe ser exactamente la que generaría encodeKey (sin variantes de codificación).
+  if (AT.encodeKey(p.id, p.type, p.sub) !== k) return null;
+  var codes = SUB_CODES[p.type];
+  if (codes ? codes.indexOf(p.sub) < 0 : (p.type !== 'disk' && p.type !== 'other' && p.sub !== '')) return null;
+  if (ALERTED_LEVELS.indexOf(v) < 0 && !(v === 'm' && p.type === 'down')) return null;
+  return [k, v];
+}
+
+// alerted: { 'id|tipo[|sub]': 'on'|'warn'|'crit' }, con límites global y por objetivo (RT-10, RT-11).
+function sanitizeAlerted(input) {
+  var out = {};
+  if (!isObj(input)) return out;
+  var total = 0, perTarget = Object.create(null);
+  Object.keys(input).forEach(function (k) {
+    var e = alertedEntry(k, input[k]);
+    if (!e || total >= MAX_ALERTED || has(out, e[0])) return;
+    var id = e[0].split('|')[0];
+    if ((perTarget[id] || 0) >= MAX_ALERTED_PER_TARGET) return;
+    out[e[0]] = e[1]; total++; perTarget[id] = (perTarget[id] || 0) + 1;
+  });
+  return out;
+}
+
 function sanitize(input, orgIds) {
   var d = copyDefaults();
   var src = isObj(input) ? input : {};
@@ -102,8 +154,7 @@ function sanitize(input, orgIds) {
   var f = src.failsBeforeAlert;
   d.failsBeforeAlert = (typeof f === 'number' && isFinite(f)) ? Math.min(10, Math.max(1, Math.round(f))) : DEFAULTS.failsBeforeAlert;
   d.groupWindowSec = GROUP_WINDOWS.indexOf(src.groupWindowSec) >= 0 ? src.groupWindowSec : DEFAULTS.groupWindowSec;
-  d.notifyRecovery = typeof src.notifyRecovery === 'boolean' ? src.notifyRecovery : DEFAULTS.notifyRecovery;
-  d.notifyDegraded = typeof src.notifyDegraded === 'boolean' ? src.notifyDegraded : DEFAULTS.notifyDegraded;
+  d.notify = sanitizeNotify(src);
 
   // orgChats: solo organizaciones existentes y chats válidos.
   if (isObj(src.orgChats)) {
@@ -114,15 +165,7 @@ function sanitize(input, orgIds) {
       d.orgChats[k] = src.orgChats[k];
     });
   }
-  // alerted: { idObjetivo: 'down' | 'degraded' }
-  if (isObj(src.alerted)) {
-    var n = 0;
-    Object.keys(src.alerted).forEach(function (k) {
-      var v = src.alerted[k];
-      if (k === '__proto__' || !TARGET_ID_RE.test(k) || (v !== 'down' && v !== 'degraded') || n >= MAX_ALERTED) return;
-      d.alerted[k] = v; n++;
-    });
-  }
+  d.alerted = sanitizeAlerted(src.alerted);
   return d;
 }
 
@@ -154,11 +197,40 @@ function save(storeMod, cfg) { storeMod.write(FILE, cfg); }
 
 /* ---- validación estricta (al recibir de la API) ---- */
 
+// «notify» parcial y campos antiguos (RT-42). Si el cuerpo trae «notify», los antiguos se ignoran (aunque se validan).
+function applyNotify(body, next, errors) {
+  var old = {};
+  ['notifyRecovery', 'notifyDegraded'].forEach(function (k) {
+    if (!has(body, k)) return;
+    if (typeof body[k] !== 'boolean') errors.push('«' + k + '» debe ser verdadero o falso.');
+    else old[k] = body[k];
+  });
+  if (has(body, 'notify')) {
+    if (!isObj(body.notify)) { errors.push('«notify» debe ser un objeto con los tipos de aviso.'); return; }
+    var upd = {}, bad = false;
+    Object.keys(body.notify).forEach(function (k) {
+      if (AT.NOTIFY_KEYS.indexOf(k) < 0) {
+        bad = true;
+        errors.push('«notify» no admite la clave «' + String(k).slice(0, 40) + '». Claves válidas: ' + AT.NOTIFY_KEYS.join(', ') + '.');
+      } else if (typeof body.notify[k] !== 'boolean') {
+        bad = true;
+        errors.push('«notify.' + k + '» debe ser verdadero o falso.');
+      } else upd[k] = body.notify[k];
+    });
+    if (!bad) Object.keys(upd).forEach(function (k) { next.notify[k] = upd[k]; });
+    return;
+  }
+  if (has(old, 'notifyRecovery')) next.notify.recovery = old.notifyRecovery;
+  if (has(old, 'notifyDegraded')) AT.DEGRADE_TYPES.forEach(function (k) { next.notify[k] = old.notifyDegraded; });
+}
+
 // -> { errors: [..] } | { value: nextCfg }. Todo o nada. Nunca toca token ni alerted.
 function validateUpdate(body, cfg, env) {
   var errors = [];
   if (!isObj(body)) return { errors: ['El cuerpo de la petición debe ser un objeto JSON.'] };
   var next = JSON.parse(JSON.stringify(cfg || copyDefaults()));
+  next.notify = sanitizeNotify(next);
+  delete next.notifyRecovery; delete next.notifyDegraded;
 
   if (has(body, 'enabled')) {
     if (typeof body.enabled !== 'boolean') errors.push('«enabled» debe ser verdadero o falso.');
@@ -189,11 +261,7 @@ function validateUpdate(body, cfg, env) {
     if (GROUP_WINDOWS.indexOf(body.groupWindowSec) < 0) errors.push('La espera antes de enviar debe ser 0, 10, 30 o 60 segundos.');
     else next.groupWindowSec = body.groupWindowSec;
   }
-  ['notifyRecovery', 'notifyDegraded'].forEach(function (k) {
-    if (!has(body, k)) return;
-    if (typeof body[k] !== 'boolean') errors.push('«' + k + '» debe ser verdadero o falso.');
-    else next[k] = body[k];
-  });
+  applyNotify(body, next, errors);
 
   // Activar exige token y chat; también si se vacía el chat con las alertas ya activas.
   if (!errors.length && next.enabled === true && (body.enabled === true || has(body, 'chatId'))) {
@@ -208,6 +276,7 @@ function validateUpdate(body, cfg, env) {
 function publicView(cfg, env) {
   var t = tokenInfo(cfg, env);
   var orgChats = {};
+  var notify = sanitizeNotify(cfg || {});
   if (cfg && isObj(cfg.orgChats)) Object.keys(cfg.orgChats).forEach(function (k) { orgChats[k] = cfg.orgChats[k]; });
   return {
     enabled: !!(cfg && cfg.enabled),
@@ -220,14 +289,15 @@ function publicView(cfg, env) {
     detail: cfg && cfg.detail === 'full' ? 'full' : 'minimal',
     failsBeforeAlert: cfg ? cfg.failsBeforeAlert : DEFAULTS.failsBeforeAlert,
     groupWindowSec: cfg && GROUP_WINDOWS.indexOf(cfg.groupWindowSec) >= 0 ? cfg.groupWindowSec : DEFAULTS.groupWindowSec,
-    notifyRecovery: cfg ? !!cfg.notifyRecovery : DEFAULTS.notifyRecovery,
-    notifyDegraded: cfg ? !!cfg.notifyDegraded : DEFAULTS.notifyDegraded,
+    notify: notify,
+    notifyRecovery: notify.recovery,
+    notifyDegraded: AT.DEGRADE_TYPES.every(function (k) { return notify[k] === true; }),
     version: VERSION
   };
 }
 
 module.exports = {
-  DEFAULTS: DEFAULTS, GROUP_WINDOWS: GROUP_WINDOWS, FILE: FILE, load: load, save: save, validateUpdate: validateUpdate,
+  DEFAULTS: DEFAULTS, NOTIFY_KEYS: AT.NOTIFY_KEYS, MAX_ALERTED: MAX_ALERTED, MAX_ALERTED_PER_TARGET: MAX_ALERTED_PER_TARGET, GROUP_WINDOWS: GROUP_WINDOWS, FILE: FILE, load: load, save: save, validateUpdate: validateUpdate,
   validateToken: validateToken, validateChatId: validateChatId, tokenInfo: tokenInfo,
   blockedByEnv: blockedByEnv, publicView: publicView, chatFor: chatFor, effectiveOn: effectiveOn
 };

@@ -25,17 +25,20 @@ function base(extra) { return Object.assign(JSON.parse(JSON.stringify(cfgMod.DEF
 
 /* ---------------- Modelo y valores por defecto (sección 8) ---------------- */
 
-test('RA-01 DEFAULTS: desactivada, token vacío, mínimo, N=2, recuperación sí, degradado no, sin alerted', function () {
+test('RA-01/RT-40 DEFAULTS: desactivada, token vacío, mínimo, N=2, notify por defecto (sección 3), versión 2, sin alerted', function () {
   var d = cfgMod.DEFAULTS;
-  assert.strictEqual(d.version, 1);
+  assert.strictEqual(d.version, 2);
   assert.strictEqual(d.enabled, false);
   assert.strictEqual(d.token, '');
   assert.strictEqual(d.chatId, '');
   assert.deepStrictEqual(d.orgChats, {});
   assert.strictEqual(d.detail, 'minimal');
   assert.strictEqual(d.failsBeforeAlert, 2);
-  assert.strictEqual(d.notifyRecovery, true);
-  assert.strictEqual(d.notifyDegraded, false);
+  // Antes: notifyRecovery true y notifyDegraded false. Ahora un único objeto `notify` con los 9 tipos (RT-40, RT-22).
+  assert.deepStrictEqual(d.notify, { down: true, recovery: true, certExpired: true, certExpiring: false, certTrust: false,
+    latency: false, resources: false, disk: false, other: false });
+  assert.strictEqual('notifyRecovery' in d, false);
+  assert.strictEqual('notifyDegraded' in d, false);
   assert.deepStrictEqual(d.alerted, {});
 });
 
@@ -62,7 +65,7 @@ test('RA-01 load: contenido que no es un objeto (null, lista, número) da los va
   });
 });
 
-test('RA-12 load tolerante: valores de tipo inválido pasan al defecto y se reescribe el archivo', function () {
+test('RA-12/RT-22/RT-40 load tolerante: valores de tipo inválido pasan al defecto (incluidos los campos antiguos) y se reescribe el archivo', function () {
   var st = fakeStore({ version: 1, enabled: 'sí', token: 'corto', chatId: 'basura', orgChats: {}, detail: 'xx', failsBeforeAlert: 'abc',
     notifyRecovery: 'no', notifyDegraded: 1, alerted: {} });
   var c = cfgMod.load(st, ['default']);
@@ -71,10 +74,19 @@ test('RA-12 load tolerante: valores de tipo inválido pasan al defecto y se rees
   assert.strictEqual(c.chatId, '');
   assert.strictEqual(c.detail, 'minimal');
   assert.strictEqual(c.failsBeforeAlert, 2);
-  assert.strictEqual(c.notifyRecovery, true);
-  assert.strictEqual(c.notifyDegraded, false);
+  assert.deepStrictEqual(c.notify, cfgMod.DEFAULTS.notify, 'campos antiguos no booleanos: valores por defecto de la sección 3');
+  assert.strictEqual('notifyRecovery' in c, false, 'los campos antiguos desaparecen del archivo');
+  assert.strictEqual('notifyDegraded' in c, false);
+  assert.strictEqual(c.version, 2);
   assert.strictEqual(st.writes, 1, 'el saneado cambió algo: se reescribe');
   assert.deepStrictEqual(st.files['alerts.json'], c);
+});
+
+test('RT-40 load tolerante: notify con claves ausentes o no booleanas toma el defecto de cada tipo; las claves desconocidas se descartan', function () {
+  var st = fakeStore(base({ notify: { down: 'sí', recovery: false, latency: true, disk: 1, inventada: true } }));
+  var c = cfgMod.load(st, ['default']);
+  assert.deepStrictEqual(c.notify, Object.assign({}, cfgMod.DEFAULTS.notify, { recovery: false, latency: true }));
+  assert.strictEqual(st.writes, 1);
 });
 
 test('RA-12 load: un archivo ya limpio no se reescribe', function () {
@@ -101,11 +113,35 @@ test('RA-10 save/load: orgChats presente en el archivo se conserva al guardar y 
   assert.deepStrictEqual(otra.orgChats, { acme: '-1001234567890' });
 });
 
-test('RA-44 load: alerted solo admite ids válidos con valor down o degraded (resto descartado, sin contaminar prototipos)', function () {
-  var raw = base({ alerted: { t_ok: 'down', t_deg: 'degraded', t_mal: 'up', 'id con espacio': 'down', t_num: 5 } });
+test('RA-44/RT-23 load: alerted antiguo se migra (down -> id|down nivel m; degraded -> id|legacy on) y lo inválido se descarta sin contaminar prototipos', function () {
+  var raw = base({ alerted: {} });
   raw.alerted = JSON.parse('{"t_ok":"down","t_deg":"degraded","t_mal":"up","id con espacio":"down","t_num":5,"__proto__":"down"}');
   var c = cfgMod.load(fakeStore(raw), ['default']);
-  assert.deepStrictEqual(Object.keys(c.alerted).sort(), ['t_deg', 't_ok']);
+  assert.deepStrictEqual(c.alerted, { 't_ok|down': 'm', 't_deg|legacy': 'on' });
+  assert.strictEqual(({}).down, undefined);
+});
+
+test('RT-10 load: alerted nuevo conserva claves válidas (id|tipo[|sub], nivel on/warn/crit) y descarta tipo desconocido, id inválido, __proto__, nivel inválido y sub largo', function () {
+  var larga = 'x'.repeat(201);
+  var raw = base({ alerted: {} });
+  raw.alerted = JSON.parse(JSON.stringify({
+    'a|down': 'on', 'a|certExpired': 'on', 'a|certExpiring': 'crit', 'a|certTrust': 'on', 'a|latency|ttfb': 'on', 'a|resources|cpu': 'on',
+    'a|disk|%2Fvar': 'warn', 'a|other|agent': 'on',
+    'a|inventado': 'on', 'id con espacio|down': 'on', '|down': 'on', 'a|down|': 'on', 'a|disk|%2Fvar|extra': 'on',
+    'a|disk|x': 'raro', 'a|down2': 'on', 'a|latency|': 'on'
+  }));
+  raw.alerted['a|disk|' + larga] = 'warn';
+  Object.defineProperty(raw.alerted, '__proto__|down', { value: 'on', enumerable: true });
+  var c = cfgMod.load(fakeStore(raw), ['default']);
+  var ks = Object.keys(c.alerted).sort();
+  ['a|down', 'a|certExpired', 'a|certExpiring', 'a|certTrust', 'a|latency|ttfb', 'a|resources|cpu', 'a|disk|%2Fvar', 'a|other|agent'].forEach(function (k) {
+    assert.ok(ks.indexOf(k) >= 0, 'se conserva ' + k);
+  });
+  assert.strictEqual(c.alerted['a|certExpiring'], 'crit');
+  assert.strictEqual(c.alerted['a|disk|%2Fvar'], 'warn');
+  ['a|inventado', 'id con espacio|down', '|down', 'a|disk|%2Fvar|extra', 'a|disk|x', 'a|down2', '__proto__|down', 'a|disk|' + larga].forEach(function (k) {
+    assert.strictEqual(k in c.alerted, false, 'se descarta ' + k.slice(0, 30));
+  });
   assert.strictEqual(({}).down, undefined);
 });
 
@@ -238,25 +274,41 @@ test('RA-30 effectiveOn: exige enabled, sin bloqueo, token (panel o env) y chat'
 
 /* ---------------- validateUpdate (estricta) ---------------- */
 
-test('RA-12 validateUpdate: campos válidos producen la nueva configuración sin tocar la original', function () {
+test('RA-12/RT-42 validateUpdate: campos válidos producen la nueva configuración sin tocar la original (notify parcial se fusiona con el actual)', function () {
   var cur = base({ token: TOKEN });
   var copia = JSON.stringify(cur);
-  var r = cfgMod.validateUpdate({ enabled: true, chatId: '-1001234567890', detail: 'full', failsBeforeAlert: 4, notifyRecovery: false, notifyDegraded: true }, cur, {});
+  var r = cfgMod.validateUpdate({ enabled: true, chatId: '-1001234567890', detail: 'full', failsBeforeAlert: 4, notify: { recovery: false, latency: true } }, cur, {});
   assert.ok(r.value, JSON.stringify(r));
   assert.strictEqual(r.value.enabled, true);
   assert.strictEqual(r.value.chatId, '-1001234567890');
   assert.strictEqual(r.value.detail, 'full');
   assert.strictEqual(r.value.failsBeforeAlert, 4);
-  assert.strictEqual(r.value.notifyRecovery, false);
-  assert.strictEqual(r.value.notifyDegraded, true);
+  assert.deepStrictEqual(r.value.notify, Object.assign({}, cfgMod.DEFAULTS.notify, { recovery: false, latency: true }));
+  assert.strictEqual('notifyRecovery' in r.value, false);
+  assert.strictEqual('notifyDegraded' in r.value, false);
   assert.strictEqual(JSON.stringify(cur), copia, 'la configuración original no se muta');
 });
 
-test('RA-12 validateUpdate: valores fuera de rango o de tipo erróneo dan errors y ningún value (todo o nada)', function () {
+test('RA-12/RT-42 validateUpdate: compatibilidad con notifyRecovery/notifyDegraded antiguos (se traducen a notify) y notify manda sobre ellos', function () {
+  var cur = base({ token: TOKEN });
+  var a = cfgMod.validateUpdate({ notifyRecovery: false, notifyDegraded: true }, cur, {});
+  assert.ok(a.value, JSON.stringify(a));
+  assert.strictEqual(a.value.notify.recovery, false);
+  ['certExpiring', 'certTrust', 'latency', 'resources', 'disk', 'other'].forEach(function (k) { assert.strictEqual(a.value.notify[k], true, k); });
+  assert.strictEqual(a.value.notify.down, true); assert.strictEqual(a.value.notify.certExpired, true);
+  var b = cfgMod.validateUpdate({ notify: { latency: false, recovery: true }, notifyRecovery: false, notifyDegraded: true }, base({ token: TOKEN }), {});
+  assert.ok(b.value, JSON.stringify(b));
+  assert.strictEqual(b.value.notify.recovery, true, 'los campos de notify mandan');
+  assert.strictEqual(b.value.notify.latency, false);
+  assert.strictEqual(b.value.notify.disk, false, 'los antiguos se ignoran si viene notify');
+});
+
+test('RA-12/RT-42 validateUpdate: valores fuera de rango o de tipo erróneo dan errors y ningún value (todo o nada)', function () {
   var cur = base({ token: TOKEN, chatId: '-100111' });
   var malos = [{ failsBeforeAlert: 0 }, { failsBeforeAlert: 11 }, { failsBeforeAlert: 1.5 }, { failsBeforeAlert: '2' }, { failsBeforeAlert: null },
     { failsBeforeAlert: -1 }, { detail: 'otro' }, { detail: 5 }, { enabled: 'true' }, { enabled: 1 }, { notifyRecovery: 'no' }, { notifyDegraded: 0 },
-    { chatId: 12345 }, { chatId: 'basura' }, { chatId: '@abc' }, { orgChats: 'x' }];
+    { chatId: 12345 }, { chatId: 'basura' }, { chatId: '@abc' }, { orgChats: 'x' },
+    { notify: 'todo' }, { notify: [] }, { notify: null }, { notify: { down: 'sí' } }, { notify: { latency: 1 } }, { notify: { inventada: true } }];
   malos.forEach(function (b) {
     var r = cfgMod.validateUpdate(b, cur, {});
     assert.ok(r.errors && r.errors.length, 'debería rechazar ' + JSON.stringify(b));
@@ -279,13 +331,13 @@ test('RA-12 validateUpdate: es atómica, un campo inválido anula también los v
 });
 
 test('RA-12 validateUpdate: claves desconocidas se ignoran y no se guardan; token y alerted nunca se tocan', function () {
-  var cur = base({ token: TOKEN, alerted: { t_1: 'down' } });
+  var cur = base({ token: TOKEN, alerted: { 't_1|down': 'on' } });
   var r = cfgMod.validateUpdate({ detail: 'full', foo: 'bar', token: TOKEN2, alerted: {}, version: 99, __proto__: { x: 1 } }, cur, {});
   assert.ok(r.value, JSON.stringify(r));
   assert.strictEqual(r.value.foo, undefined);
   assert.strictEqual(r.value.token, TOKEN, 'el token no se cambia por el PUT general');
-  assert.deepStrictEqual(r.value.alerted, { t_1: 'down' });
-  assert.strictEqual(r.value.version, 1);
+  assert.deepStrictEqual(r.value.alerted, { 't_1|down': 'on' });
+  assert.strictEqual(r.value.version, 2);
   assert.strictEqual(r.value.detail, 'full');
 });
 
@@ -337,8 +389,8 @@ test('RA-02 validateUpdate: desactivar siempre es válido, incluso sin token ni 
 
 /* ---------------- publicView ---------------- */
 
-test('RA-51 publicView: no contiene token ni alerted y trae tokenConfigured, tokenHint, tokenSource y blockedByEnv', function () {
-  var c = base({ enabled: true, token: TOKEN, chatId: '-1001234567890', alerted: { t_1: 'down' } });
+test('RA-51/RT-41 publicView: no contiene token ni alerted y trae tokenConfigured, tokenHint, tokenSource y blockedByEnv', function () {
+  var c = base({ enabled: true, token: TOKEN, chatId: '-1001234567890', alerted: { 't_1|down': 'on' } });
   var v = cfgMod.publicView(c, {});
   assert.strictEqual('token' in v, false);
   assert.strictEqual('alerted' in v, false);
@@ -351,9 +403,19 @@ test('RA-51 publicView: no contiene token ni alerted y trae tokenConfigured, tok
   assert.deepStrictEqual(v.orgChats, {});
   assert.strictEqual(v.detail, 'minimal');
   assert.strictEqual(v.failsBeforeAlert, 2);
-  assert.strictEqual(v.notifyRecovery, true);
-  assert.strictEqual(v.notifyDegraded, false);
-  assert.strictEqual(v.version, 1);
+  assert.deepStrictEqual(v.notify, cfgMod.DEFAULTS.notify, 'notify completo (9 claves booleanas)');
+  assert.strictEqual(v.notifyRecovery, true, 'compatibilidad: = notify.recovery');
+  assert.strictEqual(v.notifyDegraded, false, 'compatibilidad: verdadero solo si los seis tipos de degradación lo están');
+  assert.strictEqual(v.version, 2);
+});
+
+test('RT-41 publicView: notifyDegraded es verdadero solo con los seis tipos de degradación activos y notifyRecovery sigue a notify.recovery', function () {
+  var seis = ['certExpiring', 'certTrust', 'latency', 'resources', 'disk', 'other'];
+  var todos = {}; seis.forEach(function (k) { todos[k] = true; });
+  assert.strictEqual(cfgMod.publicView(base({ notify: Object.assign({}, cfgMod.DEFAULTS.notify, todos) }), {}).notifyDegraded, true);
+  var faltaUno = Object.assign({}, todos, { disk: false });
+  assert.strictEqual(cfgMod.publicView(base({ notify: Object.assign({}, cfgMod.DEFAULTS.notify, faltaUno) }), {}).notifyDegraded, false);
+  assert.strictEqual(cfgMod.publicView(base({ notify: Object.assign({}, cfgMod.DEFAULTS.notify, { recovery: false }) }), {}).notifyRecovery, false);
 });
 
 test('RA-20 publicView: ni el token completo ni más de los últimos 4 caracteres aparecen en la serialización', function () {

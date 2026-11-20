@@ -5,6 +5,28 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). V
 
 ## [Sin publicar]
 
+## [2.5.0] - 2026-11-19
+
+### Agregado
+- **Alertas por Telegram: panel «Qué avisar».** En Ajustes → Alertas hay nueve casillas para elegir de qué problemas quieres recibir aviso: Caída, Recuperación, Certificado vencido, Certificado por vencer, Certificado no confiable, Alta latencia o pérdida, Recursos del servidor (agente), Espacio en disco (particiones) y Otras degradaciones. Por defecto están marcadas Caída, Recuperación y Certificado vencido. Cada casilla tiene su ayuda, y si no marcas ninguna el panel avisa con «Ningún tipo seleccionado: no se enviará ningún aviso.».
+  - Cada tipo respeta «Avisar tras N fallos seguidos» y «Esperar antes de enviar», se avisa una sola vez por problema y avisa su propia recuperación (la casilla «Recuperación» es el interruptor general de esos avisos).
+  - Los avisos de certificado por vencer y de disco escalan: «CERTIFICADO POR VENCER» y luego «(URGENTE)», «ESPACIO EN DISCO BAJO» y luego «CRÍTICO» (un aviso por partición). Si saltan directo al nivel crítico, llega un solo aviso. El disco solo se da por normal al bajar 2 puntos por debajo del umbral de advertencia.
+  - Los avisos dicen el motivo concreto: «CAÍDO», «CERTIFICADO VENCIDO», «CERTIFICADO NO CONFIABLE», «LATENCIA ALTA», «PÉRDIDA DE PAQUETES», «JITTER ALTO», «RESPUESTA LENTA», «CPU ALTA», «MEMORIA ALTA», «I/O LENTO» y «DEGRADADO», con su recuperación («RECUPERADO», «CERTIFICADO RENOVADO», «CERTIFICADO CONFIABLE», «LATENCIA NORMAL», «ESPACIO EN DISCO NORMAL»…). El nivel Completo añade la partición en el motivo; el Mínimo no incluye particiones ni motivos.
+  - API: `GET/PUT /api/alerts` incluyen `notify` (nueve valores verdadero o falso; en `PUT` puede ser parcial, y un valor no válido responde 400 con el motivo en español) y `version: 2`; `GET /api/alerts/status` incluye `activeByType` (cuántos avisos vigentes hay por tipo, sin nombres de servicios ni de particiones). Los campos `notifyRecovery` y `notifyDegraded` se siguen aceptando y devolviendo por compatibilidad.
+  - Documentación: capítulo 19 del manual (nueva subsección «Qué avisar», mensajes por tipo, reglas y actualización), capítulo 11 de la guía de uso y notas en los requisitos. Los PDF se regeneran con la captura nueva.
+
+### Cambiado
+- **El panel «Qué avisar» reemplaza a «Avisar de recuperaciones» y «Avisar también de DEGRADADO».** Al actualizar desde la 2.4.0 la conversión es automática, sin pasos manuales: «Avisar de recuperaciones» pasa a la casilla Recuperación, y si «Avisar también de DEGRADADO» estaba activado quedan marcados los seis tipos de degradación (certificado por vencer, certificado no confiable, latencia o pérdida, recursos, disco y otras degradaciones); si no, quedan desmarcados. Caída y Certificado vencido quedan marcados. Lo que ya estaba avisado no se repite.
+- Un certificado vencido se avisa como «CERTIFICADO VENCIDO» y no como «CAÍDO». Con esa casilla desmarcada no se avisa nada del certificado, aunque Caída esté marcada.
+- Los avisos de degradación dicen el tipo concreto (por ejemplo «LATENCIA ALTA» o «ESPACIO EN DISCO BAJO») en lugar de un «DEGRADADO» genérico, y cada uno lleva solo el motivo de su tipo; «DEGRADADO» queda para «Otras degradaciones».
+- «RECUPERADO» llega en cuanto el servicio deja de estar caído, aunque siga lento o degradado (esos problemas tienen su propio aviso). Si lo único que lo mantiene caído es un certificado vencido con esa casilla desmarcada, no llega «RECUPERADO» mientras siga caído.
+- Un fallo de DNS, una verificación que excede el tiempo máximo o una comprobación sin datos no se toman como problema resuelto: no llegan recuperaciones falsas ni se repiten avisos. Desactivar una comprobación del objetivo (ping, HTTP, SSL o agente) o desmarcar un tipo borra lo pendiente de ese tipo sin enviar recuperaciones.
+- **Si vuelves a la 2.4.0** desde esta versión se pierde el registro de lo ya avisado (los problemas vigentes se volverán a avisar tras N fallos seguidos) y la selección de tipos: quedan «Recuperación» marcada y la degradación desmarcada.
+
+### Seguridad
+- Los nombres, motivos y particiones que salen en los avisos se limpian también de caracteres invisibles y de cambio de dirección del texto, que podían falsear el contenido de un mensaje.
+- `data/alerts.json` se valida con más rigor al cargarlo: se descartan los registros de avisos con un tipo desconocido, un identificador no válido, un nivel no permitido o una clave con otra codificación, y se respetan los límites de registros (5000 en total, 64 por servicio). Así, un archivo dañado o con datos inesperados se sanea al cargar en lugar de aceptarse tal cual.
+
 ## [2.4.0] - 2026-11-19
 
 ### Agregado

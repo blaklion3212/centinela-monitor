@@ -747,3 +747,39 @@ Resultado de las comprobaciones:
 - Validación local: 810/810 en Node 18, 20, 22 y 24. La imagen se construye y responde. Podman quedó como estaba.
 - [x] Prueba del usuario con su bot: con «Sin espera», los avisos de caída y recuperación llegaron al instante. Contenedor eliminado sin rastro.
 - [x] Versión 2.4.0 aprobada: commit, etiqueta `v2.4.0` y push con `[skip ci]`.
+
+---
+
+## 2026-11-19 · Tipos de alerta seleccionables, «Qué avisar» (versión 2.5.0)
+
+**Decisiones del usuario**
+- Panel con 9 tipos: Caída, Recuperación, Certificado vencido, Certificado por vencer, Certificado no confiable, Alta latencia o pérdida, Recursos del agente, Espacio en disco (particiones; lo agregó el usuario) y Otras degradaciones.
+- Por defecto vienen activados Caída, Recuperación y Certificado vencido.
+- Se aceptaron las recomendaciones P1 a P5:
+  - P1: el aviso del certificado vencido tiene texto propio.
+  - P2: «RECUPERADO» al dejar de estar caído.
+  - P3: histéresis de 2 puntos en el disco.
+  - P4: las advertencias de latencia y recursos van a «Otras».
+  - P5: N fallos seguidos para todos los tipos.
+
+**Hecho**
+- Requisitos RT-01 a RT-70 (`docs/requisitos/alertas-tipos.md`) y arquitectura (`arquitectura-alertas-tipos.md`).
+- Código:
+  - `server/lib/alert-types.js` (nuevo, puro).
+  - `alerts-config.js`: `notify`, `version: 2` y migración automática desde 2.4.0, con los niveles `'m'` y `legacy`.
+  - `notify.js`: decisión por tipo y mensajes por tipo.
+  - `evaluate.js`: campo `sub`.
+  - Panel «Qué avisar».
+- Pruebas: dos `probador` dejaron 1458 pruebas (antes 810). Se corrigieron 2 defectos: el certificado renovado con poca vigencia y la limpieza de tipos desactivados al arrancar.
+- Revisión de calidad: 1 hallazgo alto (QA-T1, un fallo de DNS o un tiempo agotado borraba el estado: avisos duplicados y recuperaciones perdidas), 2 medios (doble aviso warn→crit; «RECUPERADO» con el objetivo aún caído) y bajos. Todos corregidos, con pruebas de regresión.
+- Auditoría de seguridad: sin críticos, altos ni medios. 4 bajos corregidos:
+  - Prototipos en las tablas de etiquetas.
+  - Claves no canónicas en `alerts.json`.
+  - Caracteres invisibles y bidi en los avisos.
+  - Límites de claves recordadas.
+- Documentación: manual (capítulo 19 y 13.3), guía (capítulo 11), CHANGELOG, CAMBIOS-MANUAL, README y notas de sustitución en los requisitos antiguos. Capturas del panel rehechas con un servidor temporal y datos ficticios, todo borrado después.
+- Generador de PDF: los emojis de los avisos (🔴🟠🟢✅) salían como cuadros vacíos desde la 2.3.0. Ahora se dibujan como círculos de color con DejaVu.
+
+**Pendientes**
+- [x] Validación local (Node 18 a 24: 1458 pruebas) y prueba del usuario con su bot en un contenedor temporal: avisos recibidos.
+- [x] Versión 2.5.0 publicada con aprobación del usuario.

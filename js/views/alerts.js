@@ -31,11 +31,38 @@
     token: 'Es la clave del bot que te da @BotFather. Se guarda en el servidor y nunca se vuelve a mostrar completa.',
     chat: 'Es tu chat, grupo o canal donde llegarán los avisos, no el usuario del bot. Búscalo con el botón (tras escribirle al bot) o escribe su identificador o el @canal público.',
     detail: 'Mínimo envía solo el nombre del servicio, su organización y el estado. Completo añade además la dirección y el motivo.',
-    fails: 'Cuántas comprobaciones fallidas seguidas hacen falta antes de avisar. Un número mayor evita falsas alarmas.',
+    fails: 'Cuántas comprobaciones fallidas seguidas hacen falta antes de avisar; aplica a todos los tipos de aviso. Un número mayor evita falsas alarmas.',
     wait: 'Tiempo que Centinela junta los cambios antes de enviarlos en un solo mensaje. Con 0 avisa al instante, pero si caen muchos servicios a la vez recibirás más mensajes.',
-    recovery: 'Envía un aviso cuando un servicio que estaba caído vuelve a funcionar.',
-    degraded: 'Avisa también cuando un servicio pasa a DEGRADADO, no solo cuando cae. Genera más mensajes.'
+    'n-down': 'Avisa cuando un servicio deja de responder: ping, puerto, HTTP, DNS, palabra clave, servicio detenido o timeout. Es el aviso más importante.',
+    'n-recovery': 'Avisa cuando un servicio vuelve a la normalidad. Cada tipo avisa su propia recuperación y solo si ese tipo está marcado.',
+    'n-certExpired': 'Avisa cuando el certificado de un servicio ya venció. Se avisa solo como certificado vencido, no también como caída.',
+    'n-certExpiring': 'Avisa cuando falta poco para que venza un certificado: una vez al llegar a los días de advertencia y otra al llegar a los críticos, definidos en Ajustes. Ayuda a renovarlo a tiempo.',
+    'n-certTrust': 'Avisa cuando el certificado no es confiable, por ejemplo si es autofirmado o su emisor no se reconoce. El servicio sigue respondiendo.',
+    'n-latency': 'Avisa por latencia alta o pérdida de paquetes solo en nivel crítico, tras los N fallos seguidos. Los avisos de nivel advertencia van en «Otras degradaciones».',
+    'n-resources': 'Avisa cuando CPU, memoria o espera de E/S del servidor llegan a nivel crítico, tras los N fallos seguidos. Requiere el agente instalado.',
+    'n-disk': 'Avisa por cada partición al pasar el umbral de advertencia y otra vez al pasar el crítico. Requiere el agente instalado.',
+    'n-other': 'Avisa del resto de degradaciones, incluidas las advertencias de latencia, pérdida y recursos. Es el tipo que más mensajes puede generar.'
   };
+
+  // Tipos de aviso (RT-50): clave del servidor, texto y valor por defecto, en orden de pantalla.
+  var NOTIFY = [
+    ['down', 'Caída', true], ['recovery', 'Recuperación', true], ['certExpired', 'Certificado vencido', true],
+    ['certExpiring', 'Certificado por vencer', false], ['certTrust', 'Certificado no confiable', false],
+    ['latency', 'Alta latencia o pérdida', false], ['resources', 'Recursos del servidor (agente)', false],
+    ['disk', 'Espacio en disco (particiones)', false], ['other', 'Otras degradaciones', false]
+  ];
+  var DEGRADED_KEYS = ['certExpiring', 'certTrust', 'latency', 'resources', 'disk', 'other'];
+
+  // Estado de las 9 casillas: cfg.notify; si falta (servidor antiguo) valores por defecto y campos heredados.
+  function notifyState(cfg) {
+    var out = {}, src = cfg && cfg.notify && typeof cfg.notify === 'object' ? cfg.notify : null;
+    NOTIFY.forEach(function (t) { out[t[0]] = src ? !!src[t[0]] : t[2]; });
+    if (!src && cfg) {
+      if (typeof cfg.notifyRecovery === 'boolean') out.recovery = cfg.notifyRecovery;
+      if (typeof cfg.notifyDegraded === 'boolean') DEGRADED_KEYS.forEach(function (k) { out[k] = cfg.notifyDegraded; });
+    }
+    return out;
+  }
 
   function call(method, url, body) {
     var opts = { method: method, cache: 'no-store', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' } };
@@ -77,6 +104,7 @@
     function setBusy(btn, on) {
       if (!btn) return;
       btn.disabled = !!on; if (on) btn.setAttribute('aria-busy', 'true'); else btn.removeAttribute('aria-busy');
+      if (on && btn.hasAttribute('data-save')) el.querySelectorAll('[data-notify]').forEach(function (c) { c.disabled = true; });
       var s = btn.querySelector('.spin'); if (on && !s) { btn.insertAdjacentHTML('afterbegin', '<span class="spin" aria-hidden="true"></span>'); } else if (!on && s) { s.parentNode.removeChild(s); }
       if (!on) applyLocks();
     }
@@ -136,6 +164,8 @@
     function applyLocks() {
       if (!cfg) return;
       var env = cfg.tokenSource === 'env', blocked = !!cfg.blockedByEnv;
+      var sv = q('[data-save]'), saving = !!(sv && sv.getAttribute('aria-busy') === 'true'); // casillas bloqueadas mientras se guarda
+      el.querySelectorAll('[data-notify]').forEach(function (c) { c.disabled = blocked || saving; });
       var tk = q('#' + id + 'token'); if (tk) tk.disabled = env;
       [['[data-save-token]', env], ['[data-del-token]', env || !cfg.tokenConfigured], ['[data-test]', blocked], ['[data-find]', blocked]].forEach(function (p) {
         var b = q(p[0]); if (b && b.getAttribute('aria-busy') !== 'true') b.disabled = p[1];
@@ -162,7 +192,7 @@
         '<li>Escríbele un mensaje al bot, o añádelo al grupo o canal donde quieres recibir los avisos.</li>' +
         '<li>Pulsa <b>Buscar mis chats</b> y elige el destino (se rellena el campo <b>Chat de destino</b>).</li>' +
         '<li>Pulsa <b>Enviar mensaje de prueba</b> y comprueba que llega a Telegram.</li>' +
-        '<li>Activa <b>Enviar alertas por Telegram</b> y pulsa <b>Guardar</b>.</li></ol>' +
+        '<li>Elige en <b>Qué avisar</b> los tipos de aviso que quieres recibir, activa <b>Enviar alertas por Telegram</b> y pulsa <b>Guardar</b>.</li></ol>' +
         '<p class="hint al-note"><b>Grupos:</b> si el bot no aparece en la búsqueda, escribe <code>/start@nombre_del_bot</code> en el grupo (o vuelve a añadirlo). <b>Canales:</b> el bot debe ser administrador del canal. Usa un <b>bot dedicado</b> a Centinela: si otro programa lo lee o tiene un webhook, la búsqueda falla. Siempre puedes escribir el chat a mano.</p>' +
         '</div>' +
         // El aviso de privacidad queda fuera de la región plegable: siempre visible (RA-71).
@@ -193,17 +223,35 @@
             var cur = typeof cfg.groupWindowSec === 'number' ? cfg.groupWindowSec : 30;
             return '<option value="' + o[0] + '"' + (o[0] === cur ? ' selected' : '') + '>' + o[1] + '</option>';
           }).join('') + '</select>' + helpTxt('wait') + '</div></div>' +
-        '<div class="field"><div class="al-lblrow"><label class="check" for="' + id + 'recovery"><input id="' + id + 'recovery" type="checkbox"' + (cfg.notifyRecovery ? ' checked' : '') + ' aria-describedby="' + id + 'h-recovery"> Avisar de recuperaciones</label>' + helpBtn('recovery', 'Avisar de recuperaciones') + '</div>' + helpTxt('recovery') + '</div>' +
-        '<div class="field"><div class="al-lblrow"><label class="check" for="' + id + 'degraded"><input id="' + id + 'degraded" type="checkbox"' + (cfg.notifyDegraded ? ' checked' : '') + ' aria-describedby="' + id + 'h-degraded"> Avisar también de DEGRADADO</label>' + helpBtn('degraded', 'Avisar también de DEGRADADO') + '</div>' + helpTxt('degraded') + '</div>' +
+        notifyFieldset() +
         '<div class="toolbar" style="margin:16px 0 0"><button type="submit" class="btn btn--primary" data-save>Guardar</button>' +
         '<button type="button" class="btn" data-test>' + ui.icon('zap') + ' Enviar mensaje de prueba</button></div>' +
         '<div data-result role="status" aria-live="polite" style="margin-top:10px"></div></form>' +
         '<h3 class="sec-title">Estado</h3><div class="al-statusrow"><div data-status></div><button type="button" class="btn btn--sm" data-refresh>' + ui.icon('reset') + ' Actualizar estado</button></div>';
     }
 
+    // Fieldset «Qué avisar» (RT-50/RT-51): 9 casillas con ayuda y aviso no bloqueante si no hay ninguna.
+    function notifyFieldset() {
+      var cur = notifyState(cfg);
+      return '<fieldset class="field al-notify" data-notify-set><legend>Qué avisar</legend><div class="al-notify-grid">' +
+        NOTIFY.map(function (t) {
+          var k = 'n-' + t[0];
+          return '<div class="al-notify-item"><div class="al-lblrow"><label class="check" for="' + id + k + '"><input id="' + id + k + '" type="checkbox" data-notify="' + t[0] + '"' + (cur[t[0]] ? ' checked' : '') + (cfg.blockedByEnv ? ' disabled' : '') + ' aria-describedby="' + id + 'h-' + k + '"> ' + U.esc(t[1]) + '</label>' + helpBtn(k, t[1]) + '</div>' + helpTxt(k) + '</div>';
+        }).join('') + '</div><div class="hint al-none" role="status" data-none-warning></div></fieldset>';
+    }
+    function updateNoneWarning() {
+      var w = q('[data-none-warning]'); if (!w) return;
+      var any = false; el.querySelectorAll('[data-notify]').forEach(function (c) { if (c.checked) any = true; });
+      w.innerHTML = any ? '' : U.esc('Ningún tipo seleccionado: no se enviará ningún aviso.');
+    }
+    function readNotify() {
+      var o = {}; NOTIFY.forEach(function (t) { var c = q('#' + id + 'n-' + t[0]); o[t[0]] = !!(c && c.checked); });
+      return o;
+    }
+
     function draw() {
       q('[data-body]').innerHTML = form();
-      renderStatus(); renderChats(); applyLocks();
+      renderStatus(); renderChats(); applyLocks(); updateNoneWarning();
     }
 
     function loadStatus() {
@@ -236,13 +284,15 @@
       if (errs.length) { showErrors(errs); return; }
       q('[data-errors]').innerHTML = '';
       var body = { enabled: enabled, detail: q('[data-detail][aria-pressed="true"]').getAttribute('data-detail'),
-        failsBeforeAlert: n, groupWindowSec: waitValue(), notifyRecovery: q('#' + id + 'recovery').checked, notifyDegraded: q('#' + id + 'degraded').checked };
+        failsBeforeAlert: n, groupWindowSec: waitValue(), notify: readNotify() };
       // El chat solo se envía si cambió respecto a lo guardado (evita pisar una migración hecha por el servidor).
       if (currentChat() !== (cfg.chatId || '')) body.chatId = currentChat();
       setBusy(btn, true);
       call('PUT', '/api/alerts', body).then(function (j) {
         cfg = j; ui.toast('Alertas guardadas', 'ok');
         q('#' + id + 'enabled').checked = !!cfg.enabled; q('#' + id + 'chat').value = cfg.chatId || '';
+        var ns = notifyState(cfg); NOTIFY.forEach(function (t) { var c = q('#' + id + 'n-' + t[0]); if (c) c.checked = ns[t[0]]; });
+        updateNoneWarning();
         return loadStatus().then(renderStatus);
       }, function (er) {
         if (er.status === 400 && er.errors && er.errors.length) showErrors(er.errors); else showErrors([er.message]);
@@ -339,6 +389,7 @@
       else if (b.hasAttribute('data-find')) onFind(b);
       else if (b.hasAttribute('data-refresh')) onRefresh(b);
     });
+    el.addEventListener('change', function (e) { if (e.target && e.target.hasAttribute && e.target.hasAttribute('data-notify')) updateNoneWarning(); });
     el.addEventListener('submit', function (e) { e.preventDefault(); onSave(q('[data-save]')); });
     // Enter en el campo del token guarda el token (no el formulario completo).
     el.addEventListener('keydown', function (e) {

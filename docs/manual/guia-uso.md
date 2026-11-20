@@ -1,7 +1,7 @@
 ---
 title: Guía de uso
 subtitle: Cómo usar el panel de monitoreo, función por función
-version: 2.4.0
+version: 2.5.0
 date: 19 de noviembre de 2026
 ---
 
@@ -814,7 +814,7 @@ Revisa que la insignia diga **En vivo**. Alguien deberá volver a iniciar sesió
 
 # 11. Alertas por Telegram
 
-Además de mostrar colores y eventos en el panel, Centinela puede mandarte un mensaje de Telegram cuando un servicio cae, cuando se recupera y, si lo pides, cuando queda DEGRADADO. Es **opcional** y **viene desactivada**. Solo la configuran los administradores, en **Ajustes**, sección **Alertas**; los demás roles no la ven. Requiere el servidor real (en demostración dice "Disponible solo con el servidor.") y que el servidor tenga salida a Internet por HTTPS hacia `api.telegram.org`, puerto 443. Si no sabes si la tiene, consulta a quien administra el servidor.
+Además de mostrar colores y eventos en el panel, Centinela puede mandarte un mensaje de Telegram cuando un servicio cae, cuando se recupera y, según lo que elijas en **Qué avisar**, cuando un certificado vence o está por vencer, hay latencia alta, o se agotan los recursos o el disco de un servidor. Es **opcional** y **viene desactivada**. Solo la configuran los administradores, en **Ajustes**, sección **Alertas**; los demás roles no la ven. Requiere el servidor real (en demostración dice "Disponible solo con el servidor.") y que el servidor tenga salida a Internet por HTTPS hacia `api.telegram.org`, puerto 443. Si no sabes si la tiene, consulta a quien administra el servidor.
 
 ## 11.1 Configurarla paso a paso
 
@@ -827,9 +827,9 @@ La propia sección trae un panel plegable **Cómo configurarlo** con estos pasos
 3. Escríbele un mensaje al bot, o añádelo al grupo o canal donde quieres recibir los avisos.
 4. Pulsa **Buscar mis chats** y elige el destino en la lista: se rellena **Chat de destino**. (Telegram solo recuerda unas 24 horas los mensajes enviados al bot: escríbele poco antes de buscar.)
 5. Pulsa **Enviar mensaje de prueba**. Debe llegar "✅ Centinela: mensaje de prueba" al chat y el panel dice "Mensaje de prueba enviado: revisa el chat en Telegram.".
-6. Marca **Enviar alertas por Telegram** y pulsa **Guardar**. Verás "Alertas guardadas".
+6. En **Qué avisar** marca los tipos de aviso que quieres recibir (sección 11.2). Después marca **Enviar alertas por Telegram** y pulsa **Guardar**. Verás "Alertas guardadas".
 
-![Sección Alertas configurada: token guardado, chat de destino, opciones, resultado de la prueba y estado "Funcionando".](img/alertas-02.jpg)
+![Sección Alertas configurada: token guardado, chat de destino, opciones, panel "Qué avisar" con sus nueve casillas, resultado de la prueba y estado "Funcionando".](img/alertas-02.jpg)
 
 **Grupos y canales.** Si el bot no aparece al buscar en un grupo, escribe `/start@nombre_del_bot` en el grupo (o vuelve a añadirlo). En un canal, el bot debe ser **administrador**. Usa un **bot dedicado** a Centinela: si otro programa lee sus mensajes, la búsqueda falla. Siempre puedes escribir el chat a mano (un número como `-1001234567890` o `@canal` si es público).
 
@@ -843,10 +843,27 @@ La propia sección trae un panel plegable **Cómo configurarlo** con estos pasos
 | Nivel de detalle | **Mínimo**: nombre del servicio, organización y estado. **Completo**: añade la dirección (sin usuario, contraseña ni parámetros), el motivo y la hora. | Mínimo por defecto. |
 | Avisar tras N fallos seguidos | Comprobaciones fallidas seguidas necesarias antes de avisar; un número mayor evita falsas alarmas. | 1 a 10; por defecto 2. |
 | Esperar antes de enviar | Tiempo que Centinela junta los cambios antes de enviarlos en un solo mensaje. Con "Sin espera" avisa al instante, pero si caen muchos servicios a la vez recibirás más mensajes. | Sin espera (al instante), 10, 30 o 60 segundos; por defecto 30 segundos (recomendado). |
-| Avisar de recuperaciones | Avisa cuando un servicio que se había avisado como caído vuelve a funcionar. | Activada por defecto. |
-| Avisar también de DEGRADADO | Avisa también cuando un servicio queda DEGRADADO, no solo cuando cae. Genera más mensajes. | Desactivada por defecto. |
+| Qué avisar | Nueve casillas que deciden de qué problemas recibes aviso (se explican abajo). | Marcadas por defecto: Caída, Recuperación y Certificado vencido. |
 
-**Guardar** guarda estas opciones; el token tiene sus propios botones (**Guardar token** y **Borrar token**; este último pide confirmación y desactiva las alertas). Cada campo tiene un icono "?" con una explicación breve.
+**Guardar** guarda estas opciones; el token tiene sus propios botones (**Guardar token** y **Borrar token**; este último pide confirmación y desactiva las alertas). Cada campo y cada casilla tiene un icono "?" con una explicación breve.
+
+### Qué avisar
+
+Cada casilla es un tipo de aviso. Marca solo los que te sirvan: así recibes menos mensajes.
+
+| Casilla | Avisa cuando… | Por defecto |
+|---|---|---|
+| Caída | El servicio deja de responder (ping, puerto, página web, DNS, texto esperado, servicio detenido o tiempo agotado). | Marcada |
+| Recuperación | Un problema avisado se resuelve. Cada tipo avisa su propia recuperación, siempre que su casilla siga marcada. | Marcada |
+| Certificado vencido | El certificado ya venció. Llega como "CERTIFICADO VENCIDO", no como caída. | Marcada |
+| Certificado por vencer | Faltan pocos días para que venza: un aviso al llegar a los días de advertencia y otro, urgente, al llegar a los críticos (los de Ajustes, "SSL: días restantes"). | Desmarcada |
+| Certificado no confiable | El certificado no es de confianza (por ejemplo, autofirmado). El servicio sigue respondiendo. | Desmarcada |
+| Alta latencia o pérdida | La latencia, la pérdida de paquetes, el jitter o el TTFB llegan al nivel **crítico** de Ajustes. | Desmarcada |
+| Recursos del servidor (agente) | La CPU, la memoria o el I/O wait llegan al nivel crítico. **Necesita el agente instalado.** | Desmarcada |
+| Espacio en disco (particiones) | Una partición supera el umbral de advertencia y, después, el crítico. Un aviso por partición. **Necesita el agente instalado.** | Desmarcada |
+| Otras degradaciones | El resto de las advertencias (por ejemplo latencia alta pero aún no crítica, no se pudo leer el certificado o el agente no responde). Es la que más mensajes genera. | Desmarcada |
+
+Si no marcas ninguna casilla, el panel dice "Ningún tipo seleccionado: no se enviará ningún aviso." (puedes guardar igualmente, pero no llegará nada, ni siquiera las caídas).
 
 ## 11.3 Cómo son los avisos
 
@@ -860,15 +877,39 @@ Cada aviso lleva un icono, el servicio y el estado:
 
 La etiqueta entre corchetes (la organización) solo aparece si no es la principal, Host.
 
+La última palabra del aviso dice qué pasó:
+
+| Tipo | Aviso | Cuando se resuelve |
+|---|---|---|
+| Caída | 🔴 CAÍDO | 🟢 RECUPERADO |
+| Certificado vencido | 🔴 CERTIFICADO VENCIDO | 🟢 CERTIFICADO RENOVADO |
+| Certificado por vencer | 🟠 CERTIFICADO POR VENCER o 🔴 CERTIFICADO POR VENCER (URGENTE) | 🟢 CERTIFICADO RENOVADO |
+| Certificado no confiable | 🟠 CERTIFICADO NO CONFIABLE | 🟢 CERTIFICADO CONFIABLE |
+| Alta latencia o pérdida | 🟠 LATENCIA ALTA, PÉRDIDA DE PAQUETES, JITTER ALTO o RESPUESTA LENTA | 🟢 LATENCIA NORMAL, PÉRDIDA DE PAQUETES NORMAL, JITTER NORMAL o RESPUESTA NORMAL |
+| Recursos del servidor | 🟠 CPU ALTA, MEMORIA ALTA o I/O LENTO | 🟢 CPU NORMAL, MEMORIA NORMAL o I/O NORMAL |
+| Espacio en disco | 🟠 ESPACIO EN DISCO BAJO o 🔴 ESPACIO EN DISCO CRÍTICO | 🟢 ESPACIO EN DISCO NORMAL |
+| Otras degradaciones | 🟠 DEGRADADO | 🟢 RECUPERADO |
+
+Con el nivel **Mínimo** el aviso es solo esa línea (sin dirección, motivo, hora ni nombre de la partición). Con **Completo** añade la dirección, el motivo (por ejemplo "Disco /var al 87 %") y la hora.
+
 Para no saturarte:
 
-- **No avisa de cualquier tropiezo:** solo cuando el servicio acumula N fallos seguidos. Una caída corta, de menos de N comprobaciones, no genera aviso.
-- **Una vez por caída:** mientras siga caído no se repite el aviso. La recuperación solo se avisa si antes se avisó la caída.
-- **DEGRADADO activado:** solo se avisa cuando la gravedad sube. De DEGRADADO a DOWN avisa; de DOWN a DEGRADADO no.
+- **No avisa de cualquier tropiezo:** solo cuando el problema se repite en N comprobaciones seguidas, para todos los tipos. Un problema corto, de menos de N comprobaciones, no genera aviso.
+- **Una vez por problema:** mientras siga presente no se repite el aviso en cada revisión. La recuperación solo se avisa si antes se avisó el problema.
+- **Más grave, un aviso más:** un certificado por vencer avisa al llegar a los días de advertencia y otra vez, urgente, al llegar a los críticos; un disco avisa "BAJO" y luego "CRÍTICO". Si salta directamente al nivel crítico, llega un solo aviso.
+- **El disco no oscila:** "ESPACIO EN DISCO NORMAL" llega cuando el uso baja 2 puntos por debajo del umbral de advertencia (con 85 %, por debajo del 83 %).
+- **Certificado vencido no es caída:** se avisa solo como "CERTIFICADO VENCIDO". Si desmarcas esa casilla, no recibes aviso del certificado aunque "Caída" esté marcada. Si se renueva con poca vigencia, llega "CERTIFICADO RENOVADO" y, después, "CERTIFICADO POR VENCER" (si esa casilla está marcada).
+- **"RECUPERADO" al dejar de estar caído:** llega en cuanto el servicio responde de nuevo, aunque siga lento (eso tiene su propio aviso).
+- **Sin falsas recuperaciones:** si falla el DNS o se agota el tiempo de una comprobación, Centinela no da por resuelto lo ya avisado; espera a una medición real.
+- **Al desmarcar una casilla o apagar una comprobación del objetivo,** lo pendiente de ese tipo se olvida sin enviar recuperaciones.
 - **Agrupación:** los avisos para el mismo chat que ocurren mientras dura la espera ("Esperar antes de enviar": 30 segundos por defecto, configurable) llegan en un solo mensaje con el encabezado "N avisos" y una línea por servicio (hasta 20; el resto se resume como "… y N más"). Con "Sin espera" el aviso sale en cuanto se detecta el cambio; Telegram sigue limitando el ritmo (1 mensaje por segundo por chat).
 - **Cuánto tarda en llegar:** una caída llega aproximadamente tras N fallos seguidos × el intervalo del servicio, más la espera. Una recuperación llega tras la siguiente comprobación correcta (hasta un intervalo), más la espera. Con un servicio que se mide cada 10 segundos, N = 2 y la espera por defecto, la caída tarda unos 50 a 60 segundos y la recuperación unos 40. Con "Sin espera" serían unos 20 a 30 y unos 10 segundos. Qué elegir: deja 30 segundos si prefieres pocos mensajes; baja a 10 segundos o a "Sin espera" si quieres enterarte cuanto antes. El cambio vale para los avisos que se generen después de guardar.
-- **Reinicios:** si se reinicia el servidor, no se repiten las caídas ya avisadas y sí se avisa la recuperación pendiente. Los avisos que estaban esperando en ese momento se pierden, y los servicios caídos sin avisar vuelven a contar N fallos.
-- **Al desactivar** las alertas se olvidan las caídas avisadas: al volver a activarlas se parte de cero.
+- **Reinicios:** si se reinicia el servidor, no se repiten los problemas ya avisados y sí se avisa la recuperación pendiente. Los avisos que estaban esperando en ese momento se pierden, y los problemas sin avisar vuelven a contar N fallos.
+- **Al desactivar** las alertas se olvida lo avisado: al volver a activarlas se parte de cero.
+
+### Si vienes de la versión 2.4.0
+
+Al actualizar no tienes que hacer nada: tus ajustes pasan solos a las casillas. "Avisar de recuperaciones" pasa a **Recuperación**, y si tenías activado "Avisar también de DEGRADADO" quedan marcados a la vez los seis tipos de degradación (certificado por vencer, certificado no confiable, latencia o pérdida, recursos, disco y otras degradaciones); si no, quedan desmarcados. Lo que ya estaba avisado no se repite. Cambia que el certificado vencido ahora llega como "CERTIFICADO VENCIDO" (no como "CAÍDO"), que los avisos de degradación dicen el tipo concreto y que "RECUPERADO" llega al dejar de estar caído aunque siga lento. Si vuelves a la 2.4.0 se pierden lo ya avisado y la selección de tipos (quedan "Recuperación" marcada y la degradación desmarcada).
 
 ## 11.4 El estado y la privacidad
 
@@ -893,7 +934,11 @@ El token también puede definirlo quien administra el servidor con la variable `
 | Las alertas están desactivadas por la variable de entorno CENTINELA_ALERTS_DISABLED | La función está bloqueada. | Pide a quien administra el servidor que quite la variable y reinicie. |
 | El token viene de una variable de entorno y no se puede cambiar desde aquí | El token lo define el servidor. | Pide que lo cambien en el servidor. |
 | Tras reiniciar no llegan avisos | Es normal: los avisos pendientes se pierden y se vuelve a contar N fallos. | Espera unas comprobaciones; la recuperación de lo ya avisado sí llegará. |
-| Llegan muchos avisos | N bajo, DEGRADADO activado o servicios que oscilan. | Sube "Avisar tras N fallos seguidos" o desactiva "Avisar también de DEGRADADO". |
+| Llegan muchos avisos | N bajo, demasiadas casillas de "Qué avisar" marcadas (sobre todo "Otras degradaciones") o servicios que oscilan. | Desmarca los tipos que no necesitas o sube "Avisar tras N fallos seguidos". |
+| No llega el aviso de disco o de CPU | El servidor no tiene el agente instalado o activado, o la casilla "Espacio en disco (particiones)" o "Recursos del servidor (agente)" está desmarcada. | Activa "Salud del servidor (agente)" en el objetivo, comprueba que el agente responde y marca la casilla. |
+| El certificado vencido no avisa como "CAÍDO" | Es intencional: se avisa como "CERTIFICADO VENCIDO". | Marca la casilla "Certificado vencido". |
+| No llegó la recuperación tras un corte de DNS | Con un fallo de DNS o un tiempo agotado no hay medición real y lo avisado no se da por resuelto. | Es lo esperado: la recuperación llega con la primera medición real sin el problema. |
+| Dice "Ningún tipo seleccionado" | Están desmarcadas las nueve casillas. | Marca al menos "Caída". |
 | El aviso tarda en llegar | Se suman el intervalo del servicio, los N fallos seguidos y "Esperar antes de enviar" (30 segundos por defecto). La recuperación espera además la siguiente comprobación correcta. | Baja "Esperar antes de enviar" a 10 segundos o a "Sin espera (al instante)" (con "Sin espera" llegarán más mensajes si caen muchos servicios a la vez) o reduce "Avisar tras N fallos seguidos". |
 | El bot no aparece en "Buscar mis chats" | Nadie le escribió en las últimas 24 horas, no es administrador del canal, falta `/start@nombre_del_bot` en el grupo o otro programa lee sus mensajes. | Escríbele y vuelve a buscar, usa un bot dedicado o escribe el chat a mano. |
 | Un grupo dejó de recibir avisos | Pasó a supergrupo y cambió su identificador. | Centinela lo corrige solo ("El grupo pasó a supergrupo; chat actualizado"); si no, busca el chat de nuevo y guarda. |

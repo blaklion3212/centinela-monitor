@@ -1,9 +1,12 @@
 'use strict';
 /*
- * Motor de avisos por Telegram: decide cuándo avisar (N fallos seguidos y `alerted` persistido),
- * agrupa por chat de destino y envía con una cola con ritmo y reintentos. No conoce la red:
+ * Motor de avisos por Telegram: decide cuándo avisar por tipo de alerta (alert-types.decideTarget: N fallos seguidos
+ * y `alerted` persistido), agrupa por chat de destino y envía con una cola con ritmo y reintentos. No conoce la red:
  * usa el canal inyectado. Nunca bloquea al planificador (onResult retorna siempre de forma síncrona).
  */
+
+var AT = require('./alert-types');
+var Defaults = require('../../js/config/defaults.js');
 
 var DEFAULT_ORG = 'default';
 var VERSION_FALLBACK = '';
@@ -22,50 +25,72 @@ var DEFAULTS = {
   MAX_RETRY_AFTER_S: 3600,
   MAX_RATE_RETRIES: 20,   // tope de esperas por 429 por mensaje, para no reintentar para siempre
   MAX_NAME: 200,
-  SAVE_DELAY_MS: 500      // retardo del guardado diferido de `alerted` (se coalescen varias escrituras)
+  SAVE_DELAY_MS: 500,     // retardo del guardado diferido de `alerted` (se coalescen varias escrituras)
+  MAX_ALERTED: 5000,      // tope de claves avisadas persistidas (RT-11)
+  MAX_ALERTED_PER_TARGET: 64
 };
 
+// Formato antiguo (item.status): se conserva para quien lo use directamente.
 var ICONS = { down: '🔴', degraded: '🟠', up: '🟢' };
 var LABELS = { down: 'CAÍDO', degraded: 'DEGRADADO', up: 'RECUPERADO' };
+
+// Etiquetas por evento (RT-30). Las de latencia y recursos dependen del `code`.
+var CODE_ALERT = {
+  latency: 'LATENCIA ALTA', loss: 'PÉRDIDA DE PAQUETES', jitter: 'JITTER ALTO', ttfb: 'RESPUESTA LENTA',
+  cpu: 'CPU ALTA', mem: 'MEMORIA ALTA', io: 'I/O LENTO'
+};
+// Consulta segura: el código viene del exterior y no puede resolver a propiedades heredadas.
+function lookup(tbl, key) { return Object.prototype.hasOwnProperty.call(tbl, key) ? tbl[key] : ''; }
+var CODE_NORMAL = {
+  latency: 'Latencia normal', loss: 'Pérdida de paquetes normal', jitter: 'Jitter normal', ttfb: 'Respuesta normal',
+  cpu: 'CPU normal', mem: 'Memoria normal', io: 'I/O normal'
+};
+// Prioridad dentro de un grupo a igualdad de ts (RT-31); las recuperaciones van al final.
+var PRIORITY = ['down', 'certExpired', 'certExpiring', 'disk', 'resources', 'latency', 'certTrust', 'other'];
+
+// -> { icon, label } del item (nuevo con `event` o antiguo con `status`).
+function iconLabel(it) {
+  if (!it.event) return { icon: ICONS[it.status] || '', label: LABELS[it.status] || String(it.status).toUpperCase() };
+  var t = it.type || it.event;
+  if (it.event === 'recovery') {
+    var rl = 'RECUPERADO';
+    if (t === 'certExpired' || t === 'certExpiring') rl = 'CERTIFICADO RENOVADO';
+    else if (t === 'certTrust') rl = 'CERTIFICADO CONFIABLE';
+    else if (t === 'disk') rl = 'ESPACIO EN DISCO NORMAL';
+    else if ((t === 'latency' || t === 'resources') && lookup(CODE_NORMAL, it.sub)) rl = lookup(CODE_NORMAL, it.sub).toUpperCase();
+    return { icon: '🟢', label: rl };
+  }
+  var crit = it.level === 'crit';
+  if (t === 'down') return { icon: '🔴', label: 'CAÍDO' };
+  if (t === 'certExpired') return { icon: '🔴', label: 'CERTIFICADO VENCIDO' };
+  if (t === 'certExpiring') return { icon: crit ? '🔴' : '🟠', label: crit ? 'CERTIFICADO POR VENCER (URGENTE)' : 'CERTIFICADO POR VENCER' };
+  if (t === 'certTrust') return { icon: '🟠', label: 'CERTIFICADO NO CONFIABLE' };
+  if (t === 'disk') return { icon: crit ? '🔴' : '🟠', label: crit ? 'ESPACIO EN DISCO CRÍTICO' : 'ESPACIO EN DISCO BAJO' };
+  if (t === 'latency' || t === 'resources') return { icon: '🟠', label: lookup(CODE_ALERT, it.code) || lookup(CODE_ALERT, it.sub) || 'DEGRADADO' };
+  return { icon: '🟠', label: 'DEGRADADO' };
+}
+
+// Texto fijo del motivo de una recuperación (solo modo completo, RT-30).
+function recoveryReason(it) {
+  var t = it.type || '';
+  if (t === 'certExpired' || t === 'certExpiring') return 'Certificado renovado';
+  if (t === 'certTrust') return 'Certificado confiable';
+  if (t === 'disk') return (it.sub ? 'Disco ' + it.sub + ': ' : '') + 'espacio normal';
+  if ((t === 'latency' || t === 'resources') && lookup(CODE_NORMAL, it.sub)) return lookup(CODE_NORMAL, it.sub);
+  return 'Servicio recuperado';
+}
+
+function itemRank(it) {
+  if (it.event === 'recovery') return PRIORITY.length;
+  var i = PRIORITY.indexOf(it.event ? (it.type || it.event) : (it.status === 'down' ? 'down' : 'other'));
+  return i < 0 ? PRIORITY.length - 1 : i;
+}
 
 function mergeConsts(over) {
   var out = {}, k;
   for (k in DEFAULTS) out[k] = DEFAULTS[k];
   if (over) for (k in over) if (Object.prototype.hasOwnProperty.call(over, k)) out[k] = over[k];
   return out;
-}
-
-/* ---------------------------------------------------------------------------------------------
- * Decisión (pura)
- * ------------------------------------------------------------------------------------------- */
-
-// prev: { fails, downFails, alerted } con alerted en null|'down'|'degraded'. Implementa RA-40 a RA-44.
-// `fails` cuenta resultados down o degraded consecutivos (según notifyDegraded); `downFails`, solo los down consecutivos.
-// Solo se avisa cuando la gravedad sube: degraded avisado -> down exige N down seguidos; down avisado -> degraded no avisa.
-function decide(prev, status, cfg) {
-  var fails = (prev && prev.fails) || 0;
-  var downFails = (prev && prev.downFails) || 0;
-  var alerted = (prev && prev.alerted) || null;
-  var n = (cfg && cfg.failsBeforeAlert) || 2;
-  var action = null;
-
-  if (status === 'up') {
-    fails = 0; downFails = 0;
-    if (alerted) {
-      if (cfg && cfg.notifyRecovery) action = 'up';
-      alerted = null; // sin aviso de recuperación sale de `alerted` en silencio
-    }
-  } else if (status === 'down' || (status === 'degraded' && cfg && cfg.notifyDegraded)) {
-    fails++;
-    downFails = status === 'down' ? downFails + 1 : 0;
-    if (fails >= n) {
-      if (status === 'down') {
-        if (alerted !== 'down' && (alerted !== 'degraded' || downFails >= n)) { action = 'down'; alerted = 'down'; }
-      } else if (!alerted) { action = 'degraded'; alerted = 'degraded'; }
-    }
-  }
-  // 'degraded' con notifyDegraded apagado: ni cuenta ni reinicia; cualquier otro estado (unknown): sin efecto.
-  return { next: { fails: fails, downFails: downFails, alerted: alerted }, action: action };
 }
 
 /* ---------------------------------------------------------------------------------------------
@@ -87,7 +112,8 @@ function fmtTime(ts) {
 
 // Sustituye caracteres de control (y separadores de línea Unicode) por espacios, para que un nombre o motivo
 // no pueda falsear líneas del aviso.
-function clean(s) { return String(s == null ? '' : s).replace(/[\u0000-\u001F\u007F\u2028\u2029]/g, ' '); }
+// También C1 y caracteres de formato/bidi (U+200B-200F, U+202A-202E, U+2060-206F, U+FEFF).
+function clean(s) { return String(s == null ? '' : s).replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF]/g, ' '); }
 
 // Quita de una URL usuario, contraseña, query y fragmento (queda protocolo://host[:puerto]/ruta). Un host o IP queda igual.
 function cleanAddress(a) {
@@ -105,13 +131,15 @@ function cleanAddress(a) {
   }
 }
 
-// item: { status, name, label, address, reason, ts }. Devuelve las líneas del aviso (la primera es la principal).
+// item: { event, type, level, code, sub, name, label, address, reason, ts } (o el antiguo con `status`).
+// Devuelve las líneas del aviso (la primera es la principal). En modo mínimo no salen sub ni motivo (RT-60).
 function itemLines(it, full, c) {
-  var head = (ICONS[it.status] || '') + ' ' + (it.label ? '[' + clip(clean(it.label), c.MAX_NAME) + '] ' : '') +
-    clip(clean(it.name), c.MAX_NAME) + ': ' + (LABELS[it.status] || String(it.status).toUpperCase());
+  var il = iconLabel(it);
+  var head = il.icon + ' ' + (it.label ? '[' + clip(clean(it.label), c.MAX_NAME) + '] ' : '') +
+    clip(clean(it.name), c.MAX_NAME) + ': ' + il.label;
   var lines = [head];
   if (full) {
-    var reason = it.status === 'up' ? 'Servicio recuperado' : it.reason;
+    var reason = it.event === 'recovery' ? recoveryReason(it) : (it.status === 'up' ? 'Servicio recuperado' : it.reason);
     if (it.address) lines.push('Dirección: ' + clip(cleanAddress(it.address), 300));
     if (reason) lines.push('Motivo: ' + clip(clean(reason), 500));
     var t = fmtTime(it.ts);
@@ -124,7 +152,7 @@ function itemLines(it, full, c) {
 function formatMessage(items, cfg, consts) {
   var c = mergeConsts(consts);
   var full = !!(cfg && cfg.detail === 'full');
-  var list = (items || []).slice().sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); });
+  var list = (items || []).slice().sort(function (a, b) { return ((a.ts || 0) - (b.ts || 0)) || (itemRank(a) - itemRank(b)); });
   if (!list.length) return '';
   if (list.length === 1) return clip(itemLines(list[0], full, c).join('\n'), c.TG_MAX_TEXT);
 
@@ -176,13 +204,15 @@ function create(opts) {
   var sched = null, handler = null;
   var gen = 0;                 // se incrementa al vaciar: las respuestas antiguas dejan de actuar sobre la cola
   var seq = 0;
-  var fails = {};              // id -> { fails, downFails } consecutivos (memoria)
+  var counters = {};           // id -> { 'tipo|sub': { level, count, crit, missing } } (memoria)
+  var volatileKeys = {};       // claves avisadas que superaron un límite: viven solo en memoria (RT-11)
+  var limitLogged = false;     // una sola línea de log por episodio de límite alcanzado
   var redirect = {};           // chat viejo -> chat nuevo tras una migración (para ventanas de agrupación abiertas)
   var saveTimer = null, saveDirty = false; // guardado diferido de `alerted`
   var chats = {};              // chatId -> { queue, group, pumpTimer, sending, nextAt, log }
   var sendLog = [];            // instantes de envío globales (último segundo)
   var pausedUntil = 0;         // pausa global por 429 (solo si no se puede atribuir a un chat)
-  var stats = { sentTotal: 0, failedTotal: 0, droppedTotal: 0, noDest: 0, lastSentAt: 0, lastError: null, failing: false, note: '' };
+  var stats = { alertedLimitHits: 0, sentTotal: 0, failedTotal: 0, droppedTotal: 0, noDest: 0, lastSentAt: 0, lastError: null, failing: false, note: '' };
 
   function safeLog(m) { try { log(m); } catch (e) { /* el registro nunca debe romper el motor */ } }
   function now() { return clock.now(); }
@@ -192,15 +222,33 @@ function create(opts) {
     try { cfg = alertsStore.load(); } catch (e) { safeLog('No se pudo leer la configuración de alertas'); }
     if (!cfg) cfg = {};
     if (!cfg.alerted || typeof cfg.alerted !== 'object') cfg.alerted = {};
+    Object.keys(volatileKeys).forEach(function (k) { cfg.alerted[k] = volatileKeys[k]; }); // claves solo en memoria
     return cfg;
+  }
+  // Casillas «Qué avisar» vigentes (9 booleanos); lo que falte toma el valor por defecto.
+  function notifyOf() {
+    var n = {}, src = cfg && cfg.notify && typeof cfg.notify === 'object' ? cfg.notify : {};
+    AT.NOTIFY_KEYS.forEach(function (k) { n[k] = typeof src[k] === 'boolean' ? src[k] : AT.DEFAULT_NOTIFY[k]; });
+    return n;
+  }
+  function thresholdsNow() {
+    var t = null;
+    try { t = typeof opts.thresholds === 'function' ? opts.thresholds() : opts.thresholds; } catch (e) { t = null; }
+    return (t && typeof t === 'object') ? t : Defaults.SETTINGS.thresholds;
   }
   function effective() { return !!(cfg && cfgApi.effectiveOn(cfg, env)); }
 
+  // `alerted` sin las claves que solo viven en memoria por haber superado un límite.
+  function persistable() {
+    var o = {};
+    Object.keys(cfg.alerted).forEach(function (k) { if (!Object.prototype.hasOwnProperty.call(volatileKeys, k)) o[k] = cfg.alerted[k]; });
+    return o;
+  }
   // Guarda solo `alerted` sobre la configuración vigente en disco, para no pisar token o ajustes recién editados.
   function writeAlerted() {
     try {
       var fresh = alertsStore.load() || {};
-      fresh.alerted = cfg.alerted;
+      fresh.alerted = persistable();
       alertsStore.save(fresh);
     } catch (e) { safeLog('No se pudo guardar el estado de avisos (alerted)'); }
   }
@@ -417,7 +465,7 @@ function create(opts) {
         if (fresh.orgChats[o] === oldId) { fresh.orgChats[o] = newId; if (cfg.orgChats) cfg.orgChats[o] = newId; changed = true; }
       });
       if (changed) {
-        fresh.alerted = cfg.alerted;
+        fresh.alerted = persistable();
         alertsStore.save(fresh);
         stats.note = 'El grupo pasó a supergrupo; chat actualizado';
         safeLog('El grupo pasó a supergrupo; chat actualizado (' + oldId + ' -> ' + newId + ')');
@@ -449,6 +497,77 @@ function create(opts) {
     ch.group.items.push(item);
   }
 
+  /* ---- estado avisado por objetivo ---- */
+  // Vista local de un objetivo: claves 'tipo[|sub]' sin el prefijo 'id|'.
+  // Recorre todo el mapa plano: medido en ~0,3 ms por resultado con 5000 claves (suficiente; no se indexa por objetivo).
+  function viewOf(id) {
+    var pre = id + '|', o = {};
+    Object.keys(cfg.alerted).forEach(function (k) { if (k.indexOf(pre) === 0) o[k.slice(pre.length)] = cfg.alerted[k]; });
+    return o;
+  }
+  function sameMap(a, b) {
+    var ka = Object.keys(a), kb = Object.keys(b);
+    return ka.length === kb.length && ka.every(function (k) { return Object.prototype.hasOwnProperty.call(b, k) && b[k] === a[k]; });
+  }
+  function isVolatile(k) { return Object.prototype.hasOwnProperty.call(volatileKeys, k); }
+  function persistedCount(pre) {
+    var n = 0;
+    Object.keys(cfg.alerted).forEach(function (k) { if (!isVolatile(k) && (!pre || k.indexOf(pre) === 0)) n++; });
+    return n;
+  }
+  function overLimit(pre) { return persistedCount('') >= c.MAX_ALERTED || persistedCount(pre) >= c.MAX_ALERTED_PER_TARGET; }
+
+  // Al liberarse espacio, las claves solo en memoria pasan a persistidas si caben (RT-11).
+  function promoteVolatile() {
+    var moved = false;
+    Object.keys(volatileKeys).forEach(function (k) {
+      var pre = k.slice(0, k.indexOf('|') + 1);
+      if (!overLimit(pre)) { delete volatileKeys[k]; moved = true; }
+    });
+    if (!Object.keys(volatileKeys).length) limitLogged = false; // el episodio de límite terminó
+    if (moved) saveAlerted();
+  }
+
+  // Aplica la vista nueva al mapa plano. Una clave nueva que supera un límite (RT-11) no se persiste: queda en memoria.
+  // Devuelve las claves nuevas rechazadas (límite y memoria agotados); su aviso se descarta, contado en el estado.
+  function mergeView(id, oldV, newV) {
+    var pre = id + '|', rejected = {}, removed = false;
+    Object.keys(oldV).forEach(function (k) {
+      if (!Object.prototype.hasOwnProperty.call(newV, k)) { delete cfg.alerted[pre + k]; delete volatileKeys[pre + k]; removed = true; }
+    });
+    Object.keys(newV).forEach(function (k) {
+      var full = pre + k, isNew = !Object.prototype.hasOwnProperty.call(oldV, k);
+      if (isNew && overLimit(pre)) {
+        stats.alertedLimitHits++;
+        if (!limitLogged) { limitLogged = true; safeLog('Límite de avisos recordados alcanzado'); }
+        if (Object.keys(volatileKeys).length >= c.MAX_ALERTED) { rejected[full] = true; return; }
+        volatileKeys[full] = newV[k];
+      } else if (isVolatile(full)) volatileKeys[full] = newV[k];
+      cfg.alerted[full] = newV[k];
+    });
+    if (removed) promoteVolatile();
+    return rejected;
+  }
+
+  // Fuentes habilitadas del objetivo según su configuración (RT-13); null si no se conoce (se decide por presencia).
+  function checksOnOf(t) {
+    var ck = t && t.checks;
+    if (!ck || typeof ck !== 'object') return null;
+    return { ping: !!ck.ping, http: t.kind === 'url' && !!ck.http, ssl: !!ck.ssl, agent: !!(ck.agent && ck.agent.enabled) };
+  }
+
+  function itemOf(ev, r, target, org) {
+    var recovery = ev.kind === 'recovery';
+    return {
+      event: recovery ? 'recovery' : ev.type, type: ev.type, level: ev.level, code: ev.code, sub: ev.sub || '',
+      ts: ev.ts || r.ts || now(), name: target.name || r.id,
+      // Etiqueta de organización solo cuando no es la principal ('default').
+      label: (org && org.id !== DEFAULT_ORG) ? (org.name || '') : '',
+      address: target.address || '',
+      reason: recovery ? '' : (ev.reasons.join(' · ') || 'Sin detalle')
+    };
+  }
+
   /* ---- entrada de resultados ---- */
   function onResult(r) {
     try {
@@ -458,31 +577,27 @@ function create(opts) {
       var st = r.status;
       if (st !== 'up' && st !== 'degraded' && st !== 'down') return;
 
-      var prevAl = cfg.alerted[r.id] || null;
-      var pf = fails[r.id] || {};
-      var d = decide({ fails: pf.fails || 0, downFails: pf.downFails || 0, alerted: prevAl }, st, cfg);
-      fails[r.id] = { fails: d.next.fails, downFails: d.next.downFails };
-      if (d.next.alerted !== prevAl) {
-        if (d.next.alerted) cfg.alerted[r.id] = d.next.alerted; else delete cfg.alerted[r.id];
+      var target = store.findTarget(r.id) || {};
+      var oldV = viewOf(r.id);
+      var d = AT.decideTarget({ id: r.id, r: r, alerted: oldV, counters: counters[r.id] || {}, notify: notifyOf(),
+        n: cfg.failsBeforeAlert || 2, thresholds: thresholdsNow(), checksOn: checksOnOf(target) });
+      if (Object.keys(d.counters).length) counters[r.id] = d.counters; else delete counters[r.id];
+      var events = d.events;
+      if (!sameMap(oldV, d.alerted)) {
+        var rej = mergeView(r.id, oldV, d.alerted);
+        events = events.filter(function (ev) { return ev.kind !== 'alert' || !rej[AT.encodeKey(r.id, ev.type, ev.sub)]; });
+        stats.droppedTotal += d.events.length - events.length;
         saveAlerted();
       }
-      if (!d.action) return;
+      if (!events.length) return;
 
       // Datos capturados en este instante (el objetivo puede borrarse antes del envío).
-      var target = store.findTarget(r.id) || {};
       var orgId = store.orgOf(r.id);
       var org = orgId ? store.getOrg(orgId) : null;
-      var reason = d.action === 'up' ? 'Servicio recuperado' :
-        ((r.reasons || []).filter(function (x) { return x && x.level !== 'info'; }).map(function (x) { return x.text; }).join(' · ') || 'Sin detalle');
-      var item = {
-        status: d.action, ts: r.ts || now(), name: target.name || r.id,
-        // Etiqueta de organización solo cuando no es la principal ('default').
-        label: (org && org.id !== DEFAULT_ORG) ? (org.name || '') : '',
-        address: target.address || '', reason: reason
-      };
       var dest = cfgApi.chatFor(cfg, orgId);
-      if (!dest) { stats.noDest++; drop(1); return; }
-      addToGroup(resolveKey(String(dest)), item);
+      if (!dest) { stats.noDest++; drop(events.length); return; }
+      var key = resolveKey(String(dest));
+      events.forEach(function (ev) { addToGroup(key, itemOf(ev, r, target, org)); });
     } catch (e) {
       safeLog('Error interno al procesar un resultado');
     }
@@ -502,6 +617,8 @@ function create(opts) {
   function start(scheduler) {
     sched = scheduler;
     loadCfg();
+    dropDisabledTypes();   // claves de tipos desactivados: se eliminan en silencio al cargar (RT-21)
+    flushAlerted();
     if (effective()) subscribe();
   }
 
@@ -518,18 +635,34 @@ function create(opts) {
     // Cambio de chat general: las caídas avisadas al chat anterior se olvidan, para que el nuevo destino las reciba
     // (tras N fallos, como cualquier caída). Así una alerta que falló por un chat mal puesto se repite al corregirlo.
     if (wasOn && prevChat && cfgApi.chatFor(cfg, null) !== prevChat && Object.keys(cfg.alerted).length) {
-      cfg.alerted = {}; saveDirty = true; flushAlerted();
+      cfg.alerted = {}; volatileKeys = {}; limitLogged = false; saveDirty = true; flushAlerted();
       safeLog('Chat de destino cambiado: se volverán a avisar las caídas vigentes');
     }
     if (effective()) {
       if (!wasOn) { stats.failing = false; stats.lastError = null; } // pasa de apagado a encendido: estado de error limpio
+      dropDisabledTypes();
       subscribe();
     } else {
       unsubscribe();
       clearAll();
-      fails = {};
+      counters = {}; volatileKeys = {}; limitLogged = false;
       if (Object.keys(cfg.alerted).length) { cfg.alerted = {}; saveDirty = true; flushAlerted(); } // al apagar se guarda de inmediato
     }
+  }
+
+  // Tipos desactivados en «Qué avisar»: sus claves y contadores se eliminan en silencio (RT-13, RT-17).
+  function dropDisabledTypes() {
+    var nf = notifyOf(), changed = false;
+    function off(type) { return AT.TYPES.indexOf(type) >= 0 && !nf[type]; }
+    Object.keys(cfg.alerted).forEach(function (k) {
+      var p = AT.parseKey(k);
+      if (p && off(p.type)) { delete cfg.alerted[k]; delete volatileKeys[k]; changed = true; }
+    });
+    Object.keys(counters).forEach(function (id) {
+      Object.keys(counters[id]).forEach(function (lk) { if (off(lk.split('|')[0])) delete counters[id][lk]; });
+      if (!Object.keys(counters[id]).length) delete counters[id];
+    });
+    if (changed) saveAlerted();
   }
 
   function prune() {
@@ -538,11 +671,15 @@ function create(opts) {
       var ids = {};
       store.allTargets().forEach(function (t) { ids[t.id] = true; });
       var changed = false;
-      Object.keys(cfg.alerted).forEach(function (id) { if (!ids[id]) { delete cfg.alerted[id]; changed = true; } });
-      Object.keys(fails).forEach(function (id) { if (!ids[id]) delete fails[id]; });
-      // Objetivos deshabilitados: pierden su racha de fallos; `alerted` se conserva para avisar la recuperación.
-      store.allTargets().forEach(function (t) { if (t.enabled === false) delete fails[t.id]; });
-      if (changed) saveAlerted();
+      // Claves 'id|tipo[|sub]' de objetivos que ya no existen: se borran sin avisar recuperación.
+      Object.keys(cfg.alerted).forEach(function (k) {
+        var p = AT.parseKey(k);
+        if (!p || !ids[p.id]) { delete cfg.alerted[k]; delete volatileKeys[k]; changed = true; }
+      });
+      Object.keys(counters).forEach(function (id) { if (!ids[id]) delete counters[id]; });
+      // Objetivos deshabilitados: pierden sus contadores; `alerted` se conserva para avisar la recuperación.
+      store.allTargets().forEach(function (t) { if (t.enabled === false) delete counters[t.id]; });
+      if (changed) { promoteVolatile(); saveAlerted(); }
     } catch (e) { safeLog('Error interno al limpiar avisos'); }
   }
 
@@ -614,6 +751,17 @@ function create(opts) {
     });
   }
 
+  // Recuento de claves avisadas por tipo, sin ids, nombres ni particiones (RT-41, RT-60).
+  function activeByType() {
+    var out = {};
+    AT.TYPES.forEach(function (t) { out[t] = 0; });
+    Object.keys(cfg.alerted || {}).forEach(function (k) {
+      var p = AT.parseKey(k);
+      if (p && Object.prototype.hasOwnProperty.call(out, p.type)) out[p.type]++;
+    });
+    return out;
+  }
+
   function status() {
     if (!cfg) loadCfg();
     var ti = cfgApi.tokenInfo(cfg, env) || {};
@@ -630,6 +778,8 @@ function create(opts) {
       sentTotal: stats.sentTotal,
       failedTotal: stats.failedTotal,
       droppedTotal: stats.droppedTotal,
+      alertedLimitHits: stats.alertedLimitHits,
+      activeByType: activeByType(),
       tokenSource: ti.source || 'none',
       note: stats.note || ''
     };
@@ -641,4 +791,4 @@ function create(opts) {
   };
 }
 
-module.exports = { create: create, decide: decide, formatMessage: formatMessage, DEFAULTS: DEFAULTS };
+module.exports = { create: create, formatMessage: formatMessage, DEFAULTS: DEFAULTS };

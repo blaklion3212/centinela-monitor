@@ -38,9 +38,12 @@ function invertir(o) {
 
 /* ---------------- QA-A3 ---------------- */
 
-test('QA-A3 un alerts.json ya saneado con las claves en otro orden no se reescribe', function () {
+test('QA-A3/RT-40 un alerts.json ya saneado con las claves en otro orden no se reescribe', function () {
   var ok = Object.assign(JSON.parse(JSON.stringify(cfgMod.DEFAULTS)), { enabled: true, token: TOKEN, chatId: '-1001234567890',
-    detail: 'full', failsBeforeAlert: 3, notifyDegraded: true, alerted: { a1: 'down', b2: 'degraded', c3: 'down' } });
+    detail: 'full', failsBeforeAlert: 3, alerted: { 'a1|down': 'on', 'b2|disk|%2Fvar': 'warn', 'c3|certExpiring': 'crit' } });
+  // Contrato 2.5.0 (RT-40): el archivo saneado lleva `notify` completo (9 booleanos) y no tiene notifyRecovery/notifyDegraded.
+  ok.notify = Object.assign({}, ok.notify, { latency: true, disk: true, recovery: false });
+  assert.strictEqual(ok.version, 2);
   var st = fakeStore(invertir(ok));
   assert.notStrictEqual(Object.keys(st.files['alerts.json'])[0], Object.keys(ok)[0], 'control: el orden de claves es otro');
   var c = cfgMod.load(st, ['default']);
@@ -48,11 +51,13 @@ test('QA-A3 un alerts.json ya saneado con las claves en otro orden no se reescri
   assert.deepStrictEqual(c, ok);
 });
 
-test('QA-A3 con contenido a sanear sí se reescribe (una vez) y el resultado es estable en la carga siguiente', function () {
+test('QA-A3/RT-10/RT-23 con contenido a sanear sí se reescribe (una vez) y el resultado es estable en la carga siguiente', function () {
   var st = fakeStore({ enabled: true, token: 'basura', chatId: '-1001234567890', failsBeforeAlert: 99, alerted: { x: 'down', y: 'raro' } });
   var c = cfgMod.load(st, ['default']);
   assert.strictEqual(st.writes, 1);
-  assert.strictEqual(c.token, ''); assert.strictEqual(c.failsBeforeAlert, 10); assert.deepStrictEqual(c.alerted, { x: 'down' });
+  // El `alerted` antiguo {x:'down'} se migra a la clave nueva con nivel 'm' (down migrado); el valor inválido se descarta.
+  assert.strictEqual(c.token, ''); assert.strictEqual(c.failsBeforeAlert, 10); assert.deepStrictEqual(c.alerted, { 'x|down': 'm' });
+  assert.strictEqual(c.version, 2);
   cfgMod.load(st, ['default']);
   assert.strictEqual(st.writes, 1, 'la segunda carga ya no escribe');
 });
@@ -69,7 +74,7 @@ test('QA-A3 si la escritura falla, load no lanza y devuelve el valor saneado (st
   assert.ok(avisos[0].indexOf('EACCES') < 0 && avisos[0].indexOf(DIR) < 0, 'el aviso no vuelca rutas ni el error');
 });
 
-test('QA-A3 directorio de datos no escribible y contenido a sanear: load (store real) no lanza y devuelve el valor saneado', function (t) {
+test('QA-A3/RT-23 directorio de datos no escribible y contenido a sanear: load (store real) no lanza y devuelve el valor saneado', function (t) {
   if (process.platform === 'win32') return t.skip('Windows no aplica permisos POSIX de directorio');
   if (typeof process.getuid === 'function' && process.getuid() === 0) return t.skip('se ejecuta como root: un directorio 0500 sigue siendo escribible');
   fs.writeFileSync(FILE, JSON.stringify({ enabled: true, token: 'no-es-un-token', chatId: '-1001234567890', failsBeforeAlert: 50, alerted: { a: 'down' } }), { mode: 0o600 });
@@ -81,7 +86,7 @@ test('QA-A3 directorio de datos no escribible y contenido a sanear: load (store 
     console.warn = function (m) { avisos.push(String(m)); };
     var c;
     try { c = cfgMod.load(storeMod, ['default']); } finally { console.warn = w; }
-    assert.strictEqual(c.token, ''); assert.strictEqual(c.failsBeforeAlert, 10); assert.deepStrictEqual(c.alerted, { a: 'down' });
+    assert.strictEqual(c.token, ''); assert.strictEqual(c.failsBeforeAlert, 10); assert.deepStrictEqual(c.alerted, { 'a|down': 'm' });
     assert.strictEqual(c.chatId, '-1001234567890');
     assert.strictEqual(avisos.length, 1, 'avisa una vez de que no pudo reescribir');
     assert.strictEqual(JSON.parse(fs.readFileSync(FILE, 'utf8')).failsBeforeAlert, 50, 'el archivo no cambió');

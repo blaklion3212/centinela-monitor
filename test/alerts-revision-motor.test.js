@@ -14,6 +14,27 @@ var OK = { ok: true, result: { message_id: 1 } };
 function err(code, extra) { return Object.assign({ ok: false, code: code, message: 'Fallo ' + code, transient: false }, extra || {}); }
 function trans(code, extra) { return err(code, Object.assign({ transient: true }, extra || {})); }
 function item(status, name, o) { return Object.assign({ status: status, name: name, label: '', address: '', reason: '', ts: 1700000000000 }, o || {}); }
+// Contrato 2.5.0: decisión pura por tipo (alert-types.decideTarget); el estado de un objetivo es { alerted, counters } con claves locales.
+var AT = require('../server/lib/alert-types');
+var NOTIFY = Object.assign({}, AT.DEFAULT_NOTIFY);
+function notifyWith(o) { return Object.assign({}, NOTIFY, o || {}); }
+function res(status) {
+  var r = { id: 't1', ts: 1700000000000, status: status, ping: { received: 4 }, reasons: [] };
+  if (status === 'degraded') r.reasons = [{ level: 'crit', code: 'latency', down: false, text: 'latencia alta' }];
+  else if (status === 'down') r.reasons = [{ level: 'crit', code: 'port', down: true, text: 'puerto cerrado' }];
+  return r;
+}
+// Aplica una secuencia de estados y devuelve una acción por paso: null o 'alert:tipo' / 'recovery:tipo' (varias se unen con «+»).
+function seq(statuses, o, prev) {
+  var p = prev || { alerted: {}, counters: {} }, out = [];
+  o = o || {};
+  statuses.forEach(function (st) {
+    var d = AT.decideTarget({ id: 't1', r: res(st), alerted: p.alerted, counters: p.counters, notify: o.notify || NOTIFY, n: o.n == null ? 2 : o.n });
+    out.push(d.events.length ? d.events.map(function (e) { return e.kind + ':' + e.type; }).join('+') : null);
+    p = { alerted: d.alerted, counters: d.counters };
+  });
+  return { actions: out, last: p };
+}
 var VENTANA = 30000; // GROUP_WINDOW_MS por omisión
 
 /* =============================================================================================
@@ -55,54 +76,54 @@ test('QA-A1 el descarte por tope de 429 no libera al siguiente mensaje antes de 
  * QA-A2: alternar down/degraded no repite avisos (notifyDegraded = true)
  * ========================================================================================== */
 
-test('QA-A2 decide: tras un aviso, alternar down/degraded no genera avisos repetidos', function () {
-  var cfg = { failsBeforeAlert: 2, notifyRecovery: true, notifyDegraded: true };
-  var p = { fails: 0, downFails: 0, alerted: null }, acciones = [];
-  ['down', 'down', 'degraded', 'down', 'degraded', 'down', 'degraded', 'degraded', 'down'].forEach(function (s) {
-    var d = notify.decide(p, s, cfg); acciones.push(d.action); p = d.next;
-  });
-  assert.deepStrictEqual(acciones, [null, 'down', null, null, null, null, null, null, null]);
-  assert.strictEqual(p.alerted, 'down');
+test('QA-A2 -> RT-14/RT-03 decideTarget: tras un aviso, alternar down/degraded no genera avisos repetidos (cada tipo cuenta aparte)', function () {
+  // Antes (2.4.0): un solo estado global; down avisado -> degraded no avisaba nada. Ahora down y latency son tipos independientes:
+  // al dejar de estar caído se avisa su recuperación (RT-14) y, al alternar, ningún contador llega a N=2, así que no hay avisos nuevos.
+  var o = { notify: notifyWith({ latency: true }) };
+  var r = seq(['down', 'down', 'degraded', 'down', 'degraded', 'down', 'degraded', 'down'], o);
+  assert.deepStrictEqual(r.actions, [null, 'alert:down', 'recovery:down', null, null, null, null, null]);
+  assert.deepStrictEqual(r.last.alerted, {}, 'alternar no deja claves avisadas');
 });
 
-test('QA-A2 decide: degraded avisado -> down exige N down seguidos; down avisado -> degraded no avisa', function () {
-  var cfg = { failsBeforeAlert: 3, notifyRecovery: true, notifyDegraded: true };
-  function run(list) { var p = { fails: 0, downFails: 0, alerted: null }, out = []; list.forEach(function (s) { var d = notify.decide(p, s, cfg); out.push(d.action); p = d.next; }); return out; }
-  assert.deepStrictEqual(run(['degraded', 'degraded', 'degraded', 'down', 'degraded', 'down', 'down', 'down']),
-    [null, null, 'degraded', null, null, null, null, 'down'], 'solo el tercer down seguido sube a CAÍDO');
-  assert.deepStrictEqual(run(['down', 'down', 'down', 'degraded', 'degraded', 'degraded', 'degraded']),
-    [null, null, 'down', null, null, null, null], 'down avisado no baja a DEGRADADO');
-  assert.deepStrictEqual(run(['down', 'down', 'down', 'degraded', 'up']), [null, null, 'down', null, 'up'], 'la recuperación sí se avisa');
+test('QA-A2 -> RT-14 decideTarget: down y latency se avisan y recuperan por separado; cada tipo exige N resultados seguidos de SU condición', function () {
+  var o = { n: 3, notify: notifyWith({ latency: true }) };
+  assert.deepStrictEqual(seq(['degraded', 'degraded', 'degraded', 'down', 'degraded', 'down', 'down', 'down'], o).actions,
+    [null, null, 'alert:latency', 'recovery:latency', null, null, null, 'alert:down'], 'solo el tercer down seguido avisa CAÍDO; la latencia se recupera al primer down');
+  // Antes: «down avisado no baja a DEGRADADO». Ahora down se recupera y la degradación se avisa como su propio tipo tras N.
+  assert.deepStrictEqual(seq(['down', 'down', 'down', 'degraded', 'degraded', 'degraded', 'degraded'], o).actions,
+    [null, null, 'alert:down', 'recovery:down', null, 'alert:latency', null]);
+  assert.deepStrictEqual(seq(['down', 'down', 'down', 'degraded', 'up'], o).actions, [null, null, 'alert:down', 'recovery:down', null], 'la recuperación del down se avisa una sola vez');
 });
 
-test('QA-A2 motor: alternar down/degraded tras un aviso no produce mensajes nuevos; la subida degraded -> down avisa una sola vez', async function () {
-  var h = H.harness({ cfg: { failsBeforeAlert: 2, notifyDegraded: true } });
+test('QA-A2 -> RT-14/RT-31 motor: alternar down/degraded tras un aviso no produce avisos repetidos; la subida a down avisa una sola vez', async function () {
+  var h = H.harness({ cfg: { failsBeforeAlert: 2, notify: { latency: true } } });
   h.down(); h.down();
   await h.clock.advance(VENTANA);
   assert.strictEqual(h.chan.calls.length, 1);
   assert.match(h.chan.texts()[0], /CAÍDO/);
-  ['degraded', 'down', 'degraded', 'down', 'degraded', 'degraded', 'down'].forEach(function (s) { h.emit('t1', s); });
+  ['degraded', 'down', 'degraded', 'down', 'degraded', 'down'].forEach(function (s) { h.emit('t1', s); });
   await h.clock.advance(VENTANA * 3);
-  assert.strictEqual(h.chan.calls.length, 1, 'ningún aviso repetido: ' + JSON.stringify(h.chan.texts()));
+  // El único mensaje nuevo es la recuperación de la caída (RT-14) al primer degraded; la alternancia no repite avisos.
+  assert.deepStrictEqual(h.chan.texts(), ['🔴 Portal: CAÍDO', '🟢 Portal: RECUPERADO'], JSON.stringify(h.chan.texts()));
 
-  var g = H.harness({ cfg: { failsBeforeAlert: 2, notifyDegraded: true } });
+  var g = H.harness({ cfg: { failsBeforeAlert: 2, notify: { latency: true } } });
   g.emit('t1', 'degraded'); g.emit('t1', 'degraded');
   await g.clock.advance(VENTANA);
-  assert.match(g.chan.texts()[0], /DEGRADADO/);
+  assert.deepStrictEqual(g.chan.texts(), ['🟠 Portal: LATENCIA ALTA']);
   g.down(); g.emit('t1', 'degraded'); g.down();
   await g.clock.advance(VENTANA * 2);
-  assert.strictEqual(g.chan.calls.length, 1, 'down aislados no suben la gravedad');
+  assert.deepStrictEqual(g.chan.texts(), ['🟠 Portal: LATENCIA ALTA', '🟢 Portal: LATENCIA NORMAL'], 'down aislados no avisan CAÍDO; la latencia se recupera una vez');
   g.down(); g.down();
   await g.clock.advance(VENTANA * 2);
-  assert.strictEqual(g.chan.calls.length, 2);
-  assert.match(g.chan.texts()[1], /CAÍDO/);
+  assert.strictEqual(g.chan.calls.length, 3);
+  assert.match(g.chan.texts()[2], /CAÍDO/);
 });
 
 /* =============================================================================================
  * QA-A4 / SEC-A8: guardado diferido y coalescido de `alerted`
  * ========================================================================================== */
 
-test('QA-A4 varias altas de `alerted` en ráfaga producen una sola escritura tras ~500 ms', async function () {
+test('QA-A4/RT-12 varias altas de `alerted` en ráfaga producen una sola escritura tras ~500 ms', async function () {
   var ids = ['a', 'b', 'c', 'd', 'e'];
   var h = H.harness({ cfg: { failsBeforeAlert: 1 }, targets: ids.map(function (i) { return [i, 'Srv-' + i]; }) });
   var s0 = h.disk.saves;
@@ -113,29 +134,29 @@ test('QA-A4 varias altas de `alerted` en ráfaga producen una sola escritura tra
   assert.strictEqual(h.disk.saves, s0, 'aún no han pasado 500 ms');
   await h.clock.advance(1);
   assert.strictEqual(h.disk.saves, s0 + 1, 'una única escritura para cinco cambios');
-  assert.deepStrictEqual(Object.keys(h.disk.cfg.alerted).sort(), ids);
+  assert.deepStrictEqual(Object.keys(h.disk.cfg.alerted).sort(), ids.map(function (i) { return i + '|down'; }));
   await h.clock.advance(5000);
   assert.strictEqual(h.disk.saves, s0 + 1, 'sin más cambios no hay más escrituras (el temporizador no queda armado)');
 });
 
-test('QA-A4 SEC-A8 stop() fuerza la escritura pendiente de `alerted` y no deja temporizadores de guardado', async function () {
+test('QA-A4 SEC-A8/RT-12 stop() fuerza la escritura pendiente de `alerted` y no deja temporizadores de guardado', async function () {
   var h = H.harness({ cfg: { failsBeforeAlert: 1 }, targets: [['a', 'A'], ['b', 'B']] });
   var s0 = h.disk.saves;
   h.down('a'); h.down('b');
   assert.strictEqual(h.disk.saves, s0);
   h.notifier.stop();
   assert.strictEqual(h.disk.saves, s0 + 1, 'stop escribe lo pendiente');
-  assert.deepStrictEqual(Object.keys(h.disk.cfg.alerted).sort(), ['a', 'b']);
+  assert.deepStrictEqual(Object.keys(h.disk.cfg.alerted).sort(), ['a|down', 'b|down']);
   await h.clock.advance(10000);
   assert.strictEqual(h.disk.saves, s0 + 1, 'ninguna escritura posterior');
   assert.strictEqual(h.clock.pending(), 0, 'sin temporizadores colgados');
 });
 
-test('QA-A4 un reinicio tras stop() recupera `alerted` del disco y avisa la recuperación', async function () {
+test('QA-A4/RT-21 un reinicio tras stop() recupera `alerted` del disco y avisa la recuperación', async function () {
   var h = H.harness({ cfg: { failsBeforeAlert: 1 } });
   h.down();
   h.restart(); // restart llama a stop(): el cambio pendiente llega al "disco"
-  assert.strictEqual(h.disk.cfg.alerted.t1, 'down');
+  assert.strictEqual(h.disk.cfg.alerted['t1|down'], 'on');
   h.up();
   await h.clock.advance(VENTANA);
   assert.match(h.chan.texts()[0], /RECUPERADO/);
@@ -183,7 +204,7 @@ test('QA-A6 (control) el mismo ritmo hacia un grupo (id negativo) SÍ se frena p
  * QA-A7: deshabilitar un objetivo
  * ========================================================================================== */
 
-test('QA-A7 deshabilitar un objetivo reinicia su contador de fallos', async function () {
+test('QA-A7/RT-13 deshabilitar un objetivo reinicia su contador de fallos', async function () {
   var h = H.harness({ cfg: { failsBeforeAlert: 2 } });
   h.down(); // 1 de 2
   h.store.findTarget('t1').enabled = false;
@@ -197,7 +218,7 @@ test('QA-A7 deshabilitar un objetivo reinicia su contador de fallos', async func
   assert.strictEqual(h.chan.calls.length, 1, 'con N=2 down seguidos nuevos sí avisa');
 });
 
-test('QA-A7 deshabilitar conserva `alerted`: al rehabilitar y volver «up» se avisa la recuperación', async function () {
+test('QA-A7/RT-13 deshabilitar conserva `alerted`: al rehabilitar y volver «up» se avisa la recuperación', async function () {
   var h = H.harness({ cfg: { failsBeforeAlert: 2 } });
   h.down(); h.down();
   await h.clock.advance(VENTANA);
@@ -205,7 +226,7 @@ test('QA-A7 deshabilitar conserva `alerted`: al rehabilitar y volver «up» se a
   h.store.findTarget('t1').enabled = false;
   h.notifier.prune();
   await h.clock.advance(1000);
-  assert.strictEqual(h.disk.cfg.alerted.t1, 'down', 'alerted se conserva');
+  assert.strictEqual(h.disk.cfg.alerted['t1|down'], 'on', 'alerted se conserva');
   h.store.findTarget('t1').enabled = true;
   h.up();
   await h.clock.advance(VENTANA);
@@ -213,7 +234,7 @@ test('QA-A7 deshabilitar conserva `alerted`: al rehabilitar y volver «up» se a
   assert.match(h.chan.texts()[1], /RECUPERADO/);
 });
 
-test('QA-A7 prune sigue limpiando `alerted` de objetivos borrados pero no de los deshabilitados', async function () {
+test('QA-A7/RT-13 prune sigue limpiando `alerted` de objetivos borrados pero no de los deshabilitados', async function () {
   var h = H.harness({ cfg: { failsBeforeAlert: 1 }, targets: [['a', 'A'], ['b', 'B']] });
   h.down('a'); h.down('b');
   await h.clock.advance(1000);
@@ -221,7 +242,7 @@ test('QA-A7 prune sigue limpiando `alerted` de objetivos borrados pero no de los
   h.store.remove('b');
   h.notifier.prune();
   await h.clock.advance(1000);
-  assert.deepStrictEqual(Object.keys(h.disk.cfg.alerted), ['a']);
+  assert.deepStrictEqual(Object.keys(h.disk.cfg.alerted), ['a|down']);
 });
 
 /* =============================================================================================

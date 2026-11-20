@@ -21,7 +21,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
     BaseDocTemplate, Frame, KeepTogether, NextPageTemplate, PageBreak,
-    PageTemplate, Paragraph, Preformatted, Spacer, Table, TableStyle, Image,
+    PageTemplate, Paragraph, Preformatted, XPreformatted, Spacer, Table, TableStyle, Image,
 )
 from reportlab.platypus.tableofcontents import TableOfContents
 
@@ -98,15 +98,31 @@ def crear_estilos():
 
 
 # ------------------------------------------------------- markdown en línea
+# Las fuentes DejaVu no tienen emojis: los de los avisos se dibujan como un círculo o una marca de color.
+EMOJIS = {
+    "🔴": '<font face="DV" color="#d32f2f">●</font>',
+    "🟠": '<font face="DV" color="#ef6c00">●</font>',
+    "🟢": '<font face="DV" color="#2e7d32">●</font>',
+    "✅": '<font face="DV" color="#2e7d32">✔</font>',
+}
+
+
+def emojis(marcado):
+    """Sustituye los emojis por su equivalente con fuente DejaVu (sobre texto ya escapado)."""
+    for k, v in EMOJIS.items():
+        marcado = marcado.replace(k, v)
+    return marcado
+
+
 def inline(texto):
     """Convierte Markdown en línea (negrita, cursiva, código) a marcado de Paragraph."""
     partes = re.split(r"(`[^`]+`)", texto)
     salida = []
     for p in partes:
         if len(p) > 1 and p.startswith("`") and p.endswith("`"):
-            salida.append('<font face="DVM" size="8" color="#0b4fa8">%s</font>' % escape(p[1:-1]))
+            salida.append('<font face="DVM" size="8" color="#0b4fa8">%s</font>' % emojis(escape(p[1:-1])))
             continue
-        p = escape(p)
+        p = emojis(escape(p))
         p = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", p)
         p = re.sub(r"(?<![\*\w])\*(?!\s)(.+?)(?<!\s)\*(?![\*\w])", r"<i>\1</i>", p)
         salida.append(p)
@@ -347,7 +363,7 @@ def construir_codigo(lineas, est):
             salida.append(ln[:ancho_car])
             ln = "  " + ln[ancho_car:]
         salida.append(ln)
-    pre = Preformatted("\n".join(salida), est["codigo"])
+    pre = XPreformatted(emojis(escape("\n".join(salida))), est["codigo"])
     t = Table([[pre]], colWidths=[ANCHO_UTIL])
     t.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), FONDO_CODIGO),

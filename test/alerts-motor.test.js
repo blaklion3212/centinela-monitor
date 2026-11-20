@@ -13,12 +13,36 @@ var TOKEN = H.TOKEN, TOKEN_ENV = H.TOKEN_ENV;
 var OK = { ok: true, result: { message_id: 1 } };
 function err(code, extra) { return Object.assign({ ok: false, code: code, message: 'Fallo ' + code, transient: false }, extra || {}); }
 function trans(code, extra) { return err(code, Object.assign({ transient: true }, extra || {})); }
-var CFG = { failsBeforeAlert: 2, notifyRecovery: true, notifyDegraded: false, detail: 'minimal' };
-function cfgWith(o) { return Object.assign({}, CFG, o || {}); }
-// Aplica una secuencia de estados con decide y devuelve las acciones.
-function seq(statuses, cfg, prev) {
-  var p = prev || { fails: 0, alerted: null }, out = [];
-  statuses.forEach(function (s) { var d = notify.decide(p, s, cfg); out.push(d.action); p = d.next; });
+// Contrato 2.5.0: la decisión pura es AT.decideTarget (RT-14). El estado de un objetivo es { alerted, counters } con claves locales.
+var AT = require('../server/lib/alert-types');
+var NOTIFY = Object.assign({}, AT.DEFAULT_NOTIFY);
+function notifyWith(o) { return Object.assign({}, NOTIFY, o || {}); }
+// Resultado de un objetivo según el estado: up sin motivos; degraded con latencia crítica (tipo latency) o la que se indique;
+// down con un motivo down:true. Todos traen ping medible (received > 0) para que la latencia cuente como medida.
+function res(status, reasons) {
+  var r = { id: 't1', ts: 1700000000000, status: status, ping: { received: 4 } };
+  if (reasons) r.reasons = reasons;
+  else if (status === 'up' || status === 'unknown') r.reasons = [];
+  else if (status === 'degraded') r.reasons = [{ level: 'crit', code: 'latency', down: false, text: 'latencia alta' }];
+  else r.reasons = [{ level: 'crit', code: 'port', down: true, text: 'puerto cerrado' }];
+  return r;
+}
+// Un paso de decideTarget; o = { n, notify, thresholds }.
+function stepT(prev, r, o) {
+  o = o || {};
+  var p = prev || { alerted: {}, counters: {} };
+  var d = AT.decideTarget({ id: 't1', r: r, alerted: p.alerted, counters: p.counters, notify: o.notify || NOTIFY, n: o.n == null ? 2 : o.n, thresholds: o.thresholds });
+  return d;
+}
+// Aplica una secuencia de estados (o de resultados ya armados) y devuelve una acción por paso: null o 'alert:tipo' / 'recovery:tipo'
+// (varios eventos del mismo paso se unen con «+»).
+function seq(items, o, prev) {
+  var p = prev || { alerted: {}, counters: {} }, out = [];
+  items.forEach(function (it) {
+    var d = stepT(p, typeof it === 'string' ? res(it) : it, o);
+    out.push(d.events.length ? d.events.map(function (e) { return e.kind + ':' + e.type; }).join('+') : null);
+    p = { alerted: d.alerted, counters: d.counters };
+  });
   return { actions: out, last: p };
 }
 function item(status, name, o) { return Object.assign({ status: status, name: name, label: '', address: '', reason: '', ts: 1700000000000 }, o || {}); }
@@ -27,92 +51,132 @@ function item(status, name, o) { return Object.assign({ status: status, name: na
  * decide (pura): RA-40 a RA-44
  * ========================================================================================== */
 
-test('RA-40 decide: con N=2 un solo aviso de caída en la 2.ª verificación y ninguno en las siguientes', function () {
-  assert.deepStrictEqual(seq(['down', 'down', 'down', 'down'], cfgWith()).actions, [null, 'down', null, null]);
+test('RA-40/RT-14 decideTarget: con N=2 un solo aviso de caída en la 2.ª verificación y ninguno en las siguientes', function () {
+  var r = seq(['down', 'down', 'down', 'down']);
+  assert.deepStrictEqual(r.actions, [null, 'alert:down', null, null]);
+  assert.deepStrictEqual(r.last.alerted, { down: 'on' });
 });
 
-test('RA-40 decide: con N=1 el aviso sale en la primera verificación down; con N=3 en la tercera', function () {
-  assert.deepStrictEqual(seq(['down', 'down'], cfgWith({ failsBeforeAlert: 1 })).actions, ['down', null]);
-  assert.deepStrictEqual(seq(['down', 'down', 'down', 'down'], cfgWith({ failsBeforeAlert: 3 })).actions, [null, null, 'down', null]);
+test('RA-40/RT-14 decideTarget: con N=1 el aviso sale en la primera verificación down; con N=3 en la tercera', function () {
+  assert.deepStrictEqual(seq(['down', 'down'], { n: 1 }).actions, ['alert:down', null]);
+  assert.deepStrictEqual(seq(['down', 'down', 'down', 'down'], { n: 3 }).actions, [null, null, 'alert:down', null]);
 });
 
-test('RA-40 decide: un down aislado (menos de N) seguido de up no avisa ni caída ni recuperación', function () {
-  assert.deepStrictEqual(seq(['down', 'up', 'down', 'up'], cfgWith()).actions, [null, null, null, null]);
-  assert.strictEqual(seq(['down', 'up'], cfgWith()).last.fails, 0);
+test('RA-40/RT-14 decideTarget: un down aislado (menos de N) seguido de up no avisa ni caída ni recuperación y limpia el contador', function () {
+  assert.deepStrictEqual(seq(['down', 'up', 'down', 'up']).actions, [null, null, null, null]);
+  var l = seq(['down', 'up']).last;
+  assert.deepStrictEqual(l.counters, {}, 'el contador de down se reinicia (antes: fails === 0)');
+  assert.deepStrictEqual(l.alerted, {});
 });
 
-test('RA-40 decide: degraded (con notifyDegraded apagado) no cuenta ni reinicia la racha de down; solo un up la interrumpe', function () {
-  assert.deepStrictEqual(seq(['down', 'degraded', 'down'], cfgWith()).actions, [null, null, 'down']);
-  assert.deepStrictEqual(seq(['down', 'up', 'down'], cfgWith()).actions, [null, null, null]);
+test('RA-40 -> RT-14 decideTarget: un resultado degraded sin motivo down:true es un resultado medible sin la condición y REINICIA la racha de down', function () {
+  // Antes (2.4.0): degraded con notifyDegraded apagado no tocaba la racha de down y [down, degraded, down] avisaba.
+  // Ahora (RT-14, RT-03): cada tipo cuenta por separado y un resultado medible sin la condición reinicia su contador.
+  assert.deepStrictEqual(seq(['down', 'degraded', 'down']).actions, [null, null, null]);
+  assert.deepStrictEqual(seq(['down', 'up', 'down']).actions, [null, null, null]);
+  assert.deepStrictEqual(seq(['down', 'down', 'down']).actions, [null, 'alert:down', null], 'sin interrupción sí avisa');
 });
 
-test('RA-42 decide: con notifyDegraded, N resultados degraded seguidos avisan DEGRADADO; apagado no avisa nunca', function () {
-  assert.deepStrictEqual(seq(['degraded', 'degraded', 'degraded'], cfgWith({ notifyDegraded: true })).actions, [null, 'degraded', null]);
-  assert.deepStrictEqual(seq(['degraded', 'degraded', 'degraded'], cfgWith({ notifyDegraded: false })).actions, [null, null, null]);
+test('RA-42 -> RT-01/RT-03 decideTarget: con el tipo latency activo, N resultados degraded (crit) seguidos avisan; apagado no avisa nunca', function () {
+  assert.deepStrictEqual(seq(['degraded', 'degraded', 'degraded'], { notify: notifyWith({ latency: true }) }).actions, [null, 'alert:latency', null]);
+  assert.deepStrictEqual(seq(['degraded', 'degraded', 'degraded']).actions, [null, null, null], 'con los valores por defecto (latency apagado) no avisa');
+  var r = seq(['degraded', 'degraded', 'degraded'], { notify: notifyWith({ latency: true }) });
+  assert.deepStrictEqual(r.last.alerted, { 'latency|latency': 'on' });
 });
 
-test('RA-42 decide: la racha cuenta resultados degraded o down consecutivos distintos de up', function () {
-  assert.deepStrictEqual(seq(['degraded', 'down'], cfgWith({ notifyDegraded: true })).actions, [null, 'down']);
-  assert.deepStrictEqual(seq(['down', 'degraded'], cfgWith({ notifyDegraded: true })).actions, [null, 'degraded']);
+test('RA-42 -> RT-01 decideTarget: la latencia de nivel warn es del tipo other (no del tipo latency) y solo avisa con other activo', function () {
+  var warn = res('degraded', [{ level: 'warn', code: 'latency', down: false, text: 'latencia algo alta' }]);
+  assert.deepStrictEqual(seq([warn, warn], { notify: notifyWith({ latency: true }) }).actions, [null, null], 'latency activo no cubre el warn');
+  var r = seq([warn, warn], { notify: notifyWith({ other: true }) });
+  assert.deepStrictEqual(r.actions, [null, 'alert:other']);
+  assert.deepStrictEqual(r.last.alerted, { 'other|latency': 'on' });
 });
 
-test('RA-41 decide: recuperación solo si hubo aviso previo y notifyRecovery activo', function () {
-  assert.deepStrictEqual(seq(['down', 'down', 'up'], cfgWith()).actions, [null, 'down', 'up']);
-  assert.strictEqual(seq(['down', 'down', 'up'], cfgWith()).last.alerted, null);
-  assert.deepStrictEqual(seq(['up', 'up'], cfgWith()).actions, [null, null], 'nunca avisado: no hay recuperación');
+test('RA-42 -> RT-03 decideTarget: la racha ya no mezcla degraded y down; cada tipo cuenta por separado y un resultado con ambos avisa a la vez', function () {
+  var o = { notify: notifyWith({ latency: true }) };
+  // Antes: [degraded, down] y [down, degraded] avisaban al segundo resultado (racha única «distinta de up»).
+  assert.deepStrictEqual(seq(['degraded', 'down'], o).actions, [null, null], 'cada tipo lleva su propio contador');
+  assert.deepStrictEqual(seq(['down', 'degraded'], o).actions, [null, null]);
+  // Un mismo resultado con motivos de los dos tipos: dos avisos independientes en el mismo paso.
+  var both = res('down', [{ level: 'crit', code: 'port', down: true, text: 'puerto cerrado' }, { level: 'crit', code: 'latency', down: false, text: 'latencia alta' }]);
+  var r = seq([both, both], o);
+  assert.deepStrictEqual(r.actions[0], null);
+  assert.deepStrictEqual(r.actions[1].split('+').sort(), ['alert:down', 'alert:latency']);
 });
 
-test('RA-41 decide: con notifyRecovery apagado el objetivo sale de alerted en silencio', function () {
-  var r = seq(['down', 'down', 'up'], cfgWith({ notifyRecovery: false }));
-  assert.deepStrictEqual(r.actions, [null, 'down', null]);
-  assert.strictEqual(r.last.alerted, null);
-  assert.strictEqual(r.last.fails, 0);
+test('RA-41/RT-14 decideTarget: recuperación solo si hubo aviso previo y recovery activo', function () {
+  var r = seq(['down', 'down', 'up']);
+  assert.deepStrictEqual(r.actions, [null, 'alert:down', 'recovery:down']);
+  assert.deepStrictEqual(r.last.alerted, {});
+  assert.deepStrictEqual(seq(['up', 'up']).actions, [null, null], 'nunca avisado: no hay recuperación');
 });
 
-test('RA-43 decide: matriz de transiciones', function () {
-  // down avisado -> degraded con notifyDegraded apagado: nada, y sigue «avisado como caído» hasta up.
-  var a = seq(['down', 'down', 'degraded', 'degraded'], cfgWith());
-  assert.deepStrictEqual(a.actions, [null, 'down', null, null]);
-  assert.strictEqual(a.last.alerted, 'down');
-  assert.deepStrictEqual(seq(['down', 'down', 'degraded', 'up'], cfgWith()).actions, [null, 'down', null, 'up']);
-  // down avisado -> degraded con notifyDegraded: sin aviso (la gravedad baja) y alerted sigue en 'down'.
-  var b = seq(['down', 'down', 'degraded', 'degraded'], cfgWith({ notifyDegraded: true }));
-  assert.deepStrictEqual(b.actions, [null, 'down', null, null]);
-  assert.strictEqual(b.last.alerted, 'down');
-  // degraded avisado -> down: aviso CAÍDO tras N (2) down seguidos, sea cual sea notifyDegraded.
-  assert.deepStrictEqual(seq(['degraded', 'degraded', 'down', 'down'], cfgWith({ notifyDegraded: true })).actions, [null, 'degraded', null, 'down']);
-  // degraded avisado -> up: RECUPERADO.
-  assert.deepStrictEqual(seq(['degraded', 'degraded', 'up'], cfgWith({ notifyDegraded: true })).actions, [null, 'degraded', 'up']);
+test('RA-41/RT-14 decideTarget: con recovery apagado el tipo sale de alerted y sus contadores en silencio', function () {
+  var r = seq(['down', 'down', 'up'], { notify: notifyWith({ recovery: false }) });
+  assert.deepStrictEqual(r.actions, [null, 'alert:down', null]);
+  assert.deepStrictEqual(r.last.alerted, {});
+  assert.deepStrictEqual(r.last.counters, {});
+});
+
+test('RA-43 -> RT-14/RT-04 decideTarget: matriz de transiciones del contrato nuevo (down y latency son tipos independientes)', function () {
+  var on = { notify: notifyWith({ latency: true }) };
+  // down avisado -> degraded: down se recupera al DEJAR de estar caído (RT-14), sin esperar a que terminen las degradaciones.
+  // Antes (2.4.0): «sigue avisado como caído hasta up» y no avisaba nada.
+  var a = seq(['down', 'down', 'degraded']);
+  assert.deepStrictEqual(a.actions, [null, 'alert:down', 'recovery:down']);
+  assert.deepStrictEqual(a.last.alerted, {});
+  // down avisado -> degraded con latency activo: recupera down y empieza a contar latency; avisa al segundo degraded.
+  var b = seq(['down', 'down', 'degraded', 'degraded'], on);
+  assert.deepStrictEqual(b.actions, [null, 'alert:down', 'recovery:down', 'alert:latency']);
+  assert.deepStrictEqual(b.last.alerted, { 'latency|latency': 'on' });
+  // degraded avisado -> down: aviso CAÍDO tras N down y la latencia, ya no presente en un resultado medible, se recupera.
+  assert.deepStrictEqual(seq(['degraded', 'degraded', 'down', 'down'], on).actions, [null, 'alert:latency', 'recovery:latency', 'alert:down']);
+  // degraded avisado -> up: RECUPERADO del tipo latency.
+  assert.deepStrictEqual(seq(['degraded', 'degraded', 'up'], on).actions, [null, 'alert:latency', 'recovery:latency']);
   // up -> down tras N y vuelta: un aviso de cada.
-  assert.deepStrictEqual(seq(['up', 'down', 'down', 'up'], cfgWith()).actions, [null, null, 'down', 'up']);
+  assert.deepStrictEqual(seq(['up', 'down', 'down', 'up']).actions, [null, null, 'alert:down', 'recovery:down']);
 });
 
-test('RA-43 decide: unknown no genera avisos ni altera el estado', function () {
-  var prev = { fails: 1, alerted: null };
-  var d = notify.decide(prev, 'unknown', cfgWith());
-  assert.strictEqual(d.action, null);
-  assert.deepStrictEqual(d.next, { fails: 1, downFails: 0, alerted: null });
-  var d2 = notify.decide({ fails: 3, alerted: 'down' }, 'unknown', cfgWith());
-  assert.deepStrictEqual(d2.next, { fails: 3, downFails: 0, alerted: 'down' });
-  assert.strictEqual(notify.decide(prev, undefined, cfgWith()).action, null);
+test('RA-43/RT-14 decideTarget: unknown no genera avisos ni altera el estado (ni alerted ni contadores)', function () {
+  var prev = { alerted: { down: 'on' }, counters: { down: { level: 'on', count: 3, crit: 0, missing: 0 } } };
+  var d = stepT(prev, res('unknown'));
+  assert.deepStrictEqual(d.events, []);
+  assert.deepStrictEqual(d.alerted, prev.alerted);
+  assert.deepStrictEqual(d.counters, prev.counters);
+  var d2 = stepT({ alerted: {}, counters: { down: { level: 'on', count: 1, crit: 0, missing: 0 } } }, res('unknown'));
+  assert.deepStrictEqual(d2.counters, { down: { level: 'on', count: 1, crit: 0, missing: 0 } });
+  assert.deepStrictEqual(d2.events, []);
 });
 
-test('RA-44 decide: tras reiniciar, un objetivo ya avisado que sigue down no repite el aviso y su up sí se avisa', function () {
-  var r = seq(['down', 'down', 'up'], cfgWith(), { fails: 0, alerted: 'down' });
-  assert.deepStrictEqual(r.actions, [null, null, 'up']);
+test('RA-44/RT-21 decideTarget: tras reiniciar, un objetivo ya avisado que sigue down no repite el aviso y su up sí se avisa', function () {
+  // El contador parte de cero (memoria) pero la clave persistida evita repetir el aviso.
+  var r = seq(['down', 'down', 'up'], null, { alerted: { down: 'on' }, counters: {} });
+  assert.deepStrictEqual(r.actions, [null, null, 'recovery:down']);
 });
 
-test('Casos límite decide: cambio de N en caliente aplica a la racha en curso', function () {
-  assert.strictEqual(notify.decide({ fails: 2, alerted: null }, 'down', cfgWith({ failsBeforeAlert: 2 })).action, 'down', 'N bajado: sale en la siguiente');
-  assert.strictEqual(notify.decide({ fails: 5, alerted: null }, 'down', cfgWith({ failsBeforeAlert: 3 })).action, 'down');
+test('Casos límite decideTarget: cambio de N en caliente aplica a la racha en curso (el contador se compara con el N vigente)', function () {
+  var c = function (n) { return { alerted: {}, counters: { down: { level: 'on', count: n, crit: 0, missing: 0 } } }; };
+  assert.deepStrictEqual(seq(['down'], { n: 2 }, c(1)).actions, ['alert:down'], 'N bajado: sale en la siguiente');
+  assert.deepStrictEqual(seq(['down'], { n: 3 }, c(4)).actions, ['alert:down']);
+  assert.deepStrictEqual(seq(['down'], { n: 5 }, c(1)).actions, [null], 'N subido: sigue contando');
 });
 
-test('RA-40 decide: no muta el estado previo y tolera entradas vacías', function () {
-  var prev = { fails: 1, alerted: null };
-  notify.decide(prev, 'down', cfgWith());
-  assert.deepStrictEqual(prev, { fails: 1, alerted: null });
-  assert.doesNotThrow(function () { notify.decide(null, 'down', cfgWith()); });
-  assert.doesNotThrow(function () { notify.decide(undefined, 'up', undefined); });
+test('RA-40/RT-14 decideTarget: no muta el estado previo y tolera entradas vacías', function () {
+  var prev = { alerted: { down: 'on' }, counters: { down: { level: 'on', count: 1, crit: 0, missing: 0 } } };
+  var copia = JSON.parse(JSON.stringify(prev));
+  AT.decideTarget({ id: 't1', r: res('down'), alerted: prev.alerted, counters: prev.counters, notify: NOTIFY, n: 2 });
+  assert.deepStrictEqual(prev, copia);
+  assert.doesNotThrow(function () { AT.decideTarget(null); });
+  assert.doesNotThrow(function () { AT.decideTarget(undefined); });
+  assert.doesNotThrow(function () { AT.decideTarget({}); });
+  assert.doesNotThrow(function () { AT.decideTarget({ r: { status: 'up' } }); });
+});
+
+test('RT-14 salvaguarda: estado down sin ningún motivo down:true avisa «Sin respuesta» como tipo down', function () {
+  var r = seq([res('down', []), res('down', [])]);
+  assert.deepStrictEqual(r.actions, [null, 'alert:down']);
+  var d = stepT({ alerted: {}, counters: { down: { level: 'on', count: 1, crit: 0, missing: 0 } } }, res('down', []));
+  assert.deepStrictEqual(d.events[0].reasons, ['Sin respuesta']);
 });
 
 /* =============================================================================================
@@ -387,8 +451,8 @@ test('RA-41 recuperación: tras un aviso de caída, el primer up avisa RECUPERAD
   assert.deepStrictEqual(h.chan.texts(), ['🔴 Portal: CAÍDO', '🟢 Portal: RECUPERADO']);
 });
 
-test('RA-41 recuperación: con notifyRecovery apagado no se avisa; sin caída avisada tampoco', async function () {
-  var h = H.harness({ cfg: { notifyRecovery: false } });
+test('RA-41/RT-14 recuperación: con notify.recovery apagado no se avisa; sin caída avisada tampoco', async function () {
+  var h = H.harness({ cfg: { notify: { recovery: false } } });
   h.down(); h.down(); await h.clock.advance(30000); h.up(); await h.clock.advance(30000);
   assert.deepStrictEqual(h.chan.texts(), ['🔴 Portal: CAÍDO']);
   var g = H.harness();
@@ -396,11 +460,12 @@ test('RA-41 recuperación: con notifyRecovery apagado no se avisa; sin caída av
   assert.strictEqual(g.chan.calls.length, 0, 'una caída que nunca se avisó no tiene recuperación');
 });
 
-test('RA-42 DEGRADADO: con notifyDegraded avisa 🟠 tras N resultados; sin él no avisa', async function () {
-  var h = H.harness({ cfg: { notifyDegraded: true } });
+test('RA-42 -> RT-30/RT-01 latencia: con notify.latency avisa 🟠 «LATENCIA ALTA» tras N resultados crit; sin él no avisa', async function () {
+  // Antes: notifyDegraded avisaba «DEGRADADO» genérico. Ahora el aviso es por tipo y la etiqueta depende del code.
+  var h = H.harness({ cfg: { notify: { latency: true } } });
   h.emit('t1', 'degraded'); h.emit('t1', 'degraded');
   await h.clock.advance(30000);
-  assert.deepStrictEqual(h.chan.texts(), ['🟠 Portal: DEGRADADO']);
+  assert.deepStrictEqual(h.chan.texts(), ['🟠 Portal: LATENCIA ALTA']);
   var g = H.harness();
   g.emit('t1', 'degraded'); g.emit('t1', 'degraded'); g.emit('t1', 'degraded');
   await g.clock.advance(60000);
@@ -594,7 +659,7 @@ test('RA-21 el motor envía con el token de la variable de entorno cuando existe
 
 /* ---------- persistencia de alerted y reinicio (RA-44, RA-98.9) ---------- */
 
-test('RA-44 alerted: se guarda al avisar la caída y se quita al avisar la recuperación; solo se escribe cuando cambia', async function () {
+test('RA-44/RT-10/RT-12 alerted: se guarda al avisar la caída y se quita al avisar la recuperación; solo se escribe cuando cambia', async function () {
   var h = H.harness();
   var s0 = h.disk.saves;
   h.down();
@@ -602,7 +667,7 @@ test('RA-44 alerted: se guarda al avisar la caída y se quita al avisar la recup
   assert.strictEqual(h.disk.saves, s0, 'sin aviso aún: nada que guardar');
   h.down();
   await h.clock.advance(500);
-  assert.deepStrictEqual(h.disk.cfg.alerted, { t1: 'down' });
+  assert.deepStrictEqual(h.disk.cfg.alerted, { 't1|down': 'on' });
   assert.strictEqual(h.disk.saves, s0 + 1);
   h.down(); h.down(); h.down();
   await h.clock.advance(500);
@@ -616,7 +681,7 @@ test('RA-44 alerted: se guarda al avisar la caída y se quita al avisar la recup
   assert.strictEqual(h.disk.saves, s0 + 2);
 });
 
-test('RA-44 alerted: guardarlo conserva el resto de la configuración del disco (token, ajustes editados)', async function () {
+test('RA-44/RT-12 alerted: guardarlo conserva el resto de la configuración del disco (token, ajustes editados)', async function () {
   var h = H.harness();
   h.disk.cfg.detail = 'full'; h.disk.cfg.chatId = '-100999'; // edición posterior desde el panel, sin reload todavía
   h.down(); h.down();
@@ -624,7 +689,7 @@ test('RA-44 alerted: guardarlo conserva el resto de la configuración del disco 
   assert.strictEqual(h.disk.cfg.token, TOKEN);
   assert.strictEqual(h.disk.cfg.chatId, '-100999');
   assert.strictEqual(h.disk.cfg.detail, 'full');
-  assert.deepStrictEqual(h.disk.cfg.alerted, { t1: 'down' });
+  assert.deepStrictEqual(h.disk.cfg.alerted, { 't1|down': 'on' });
 });
 
 test('RA-98.9 reinicio: una caída ya avisada y todavía caída no se repite; su recuperación sí se avisa', async function () {
@@ -654,11 +719,11 @@ test('RA-98.9 reinicio: una caída no avisada se avisa tras N fallos seguidos co
   assert.deepStrictEqual(h.chan.texts(), ['🔴 Portal: CAÍDO']);
 });
 
-test('RA-44 reinicio: los avisos en ventana o cola se pierden, pero el objetivo queda en alerted y su recuperación se avisa', async function () {
+test('RA-44/RT-21 reinicio: los avisos en ventana o cola se pierden, pero el objetivo queda en alerted y su recuperación se avisa', async function () {
   var h = H.harness();
   h.down(); h.down(); // en ventana de agrupación
   h.restart(); // stop() fuerza el guardado pendiente de alerted
-  assert.deepStrictEqual(h.disk.cfg.alerted, { t1: 'down' });
+  assert.deepStrictEqual(h.disk.cfg.alerted, { 't1|down': 'on' });
   await h.clock.advance(120000);
   assert.strictEqual(h.chan.calls.length, 0, 'la ventana se perdió');
   h.up();
@@ -677,8 +742,8 @@ test('RA-44 objetivo nuevo con el servidor en marcha: si está caído desde su p
   assert.deepStrictEqual(h.chan.texts(), ['🔴 Recien creado: CAÍDO']);
 });
 
-test('RA-44 degraded no avisado tras reiniciar con notifyDegraded se cuenta y avisa como cualquier caída', async function () {
-  var h = H.harness({ cfg: { notifyDegraded: true } });
+test('RA-44/RT-21 latencia no avisada tras reiniciar con notify.latency: el contador parte de cero y avisa como cualquier caída', async function () {
+  var h = H.harness({ cfg: { notify: { latency: true } } });
   h.emit('t1', 'degraded');
   h.restart();
   h.emit('t1', 'degraded');
@@ -686,14 +751,14 @@ test('RA-44 degraded no avisado tras reiniciar con notifyDegraded se cuenta y av
   assert.strictEqual(h.chan.calls.length, 0);
   h.emit('t1', 'degraded');
   await h.clock.advance(30000);
-  assert.deepStrictEqual(h.chan.texts(), ['🟠 Portal: DEGRADADO']);
+  assert.deepStrictEqual(h.chan.texts(), ['🟠 Portal: LATENCIA ALTA']);
 });
 
-test('RA-44 desactivar la función vacía alerted y los contadores: al reactivar se parte de cero sin recuperaciones antiguas', async function () {
+test('RA-44/RT-12 desactivar la función vacía alerted y los contadores: al reactivar se parte de cero sin recuperaciones antiguas', async function () {
   var h = H.harness();
   h.down(); h.down();
   await h.clock.advance(30000);
-  assert.deepStrictEqual(h.disk.cfg.alerted, { t1: 'down' });
+  assert.deepStrictEqual(h.disk.cfg.alerted, { 't1|down': 'on' });
   h.disk.cfg.enabled = false; h.notifier.reload();
   await h.clock.advance(500);
   assert.deepStrictEqual(h.disk.cfg.alerted, {}, 'alerted vaciado en disco');
@@ -706,15 +771,15 @@ test('RA-44 desactivar la función vacía alerted y los contadores: al reactivar
   assert.strictEqual(h.chan.calls.length, 1, 'el contador de fallos también se reinició');
 });
 
-test('RA-44 borrar un objetivo lo saca de alerted (prune) y no se avisa su recuperación', async function () {
+test('RA-44/RT-13 borrar un objetivo lo saca de alerted (prune) y no se avisa su recuperación', async function () {
   var h = H.harness({ targets: [['t1', 'Portal'], ['t2', 'Otro']] });
   h.down('t1'); h.down('t1'); h.down('t2'); h.down('t2');
   await h.clock.advance(30000);
-  assert.deepStrictEqual(Object.keys(h.disk.cfg.alerted).sort(), ['t1', 't2']);
+  assert.deepStrictEqual(Object.keys(h.disk.cfg.alerted).sort(), ['t1|down', 't2|down']);
   h.store.remove('t1');
   h.notifier.prune();
   await h.clock.advance(500);
-  assert.deepStrictEqual(h.disk.cfg.alerted, { t2: 'down' });
+  assert.deepStrictEqual(h.disk.cfg.alerted, { 't2|down': 'on' });
   var s = h.disk.saves;
   h.notifier.prune();
   await h.clock.advance(500);
