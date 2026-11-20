@@ -150,9 +150,9 @@ Resultado de las comprobaciones:
 - Con la autenticación activa y sin `CENTINELA_ALLOWED_HOSTS`, un `Host` ajeno se acepta (200). Es lo diseñado.
 
 **Limpieza:** `down -v` y luego `rm`/`rmi`/`prune` de contenedores, pods, imágenes (incluida la base `node:22`), volúmenes, red y caché de construcción. Verificado: 0 contenedores, 0 imágenes, 0 volúmenes, solo la red por defecto `podman`, puerto 9595 libre y `data/` del proyecto intacto. podman y podman-compose siguen instalados.
-- [ ] Verificación por revisor-qa y auditor-seguridad.
-- [ ] Documentación final en `docs/`: guía de despliegue seguro y variables de entorno.
-- [ ] Iniciar git, crear el CHANGELOG y proponer la versión SemVer. Requiere aprobación del usuario.
+- [x] Verificación por revisor-qa y auditor-seguridad: ambos APTO en la fase 2d.
+- [x] Documentación final en `docs/`: `despliegue-seguro.md` creado en la fase 2b; variables en el anexo C del manual (fase 3).
+- [x] Iniciar git, crear el CHANGELOG y proponer la versión SemVer: hecho en el cierre de la 2.0.0, con aprobación del usuario.
 
 ---
 
@@ -274,10 +274,10 @@ Resultado de las comprobaciones:
   - Capturas desactualizadas: Figuras 12, 14 y 15. Se conservan, con una nota que explica la diferencia. Habrá que rehacerlas cuando sea posible.
 
 **Pendientes**
-- [ ] Ajuste del generador del manual y sustitución de `docs/Centinela-Manual-de-usuario.pdf`.
-- [ ] Verificación final (revisor-qa y auditor-seguridad), en curso.
-- [ ] Cierre: iniciar git, CHANGELOG y proponer la versión SemVer. Requiere aprobación del usuario.
-- [ ] **Backlog:**
+- [x] Ajuste del generador del manual y sustitución de `docs/Centinela-Manual-de-usuario.pdf`: PDF de la 2.0.0, 65 páginas (cierre de la 2.0.0).
+- [x] Verificación final (revisor-qa y auditor-seguridad): ambos APTO en la fase 2d.
+- [x] Cierre: iniciar git, CHANGELOG y proponer la versión SemVer: hecho en el cierre de la 2.0.0.
+- [x] **Backlog** (resuelto en la fase 3, versión 2.1.0):
   - N-04 (proxy de confianza).
   - H-17 (límite de frecuencia de `/check`).
   - Capturas nuevas para el manual.
@@ -664,7 +664,7 @@ Resultado de las comprobaciones:
 **Estado:** en espera. No hay código.
 
 **Pendientes**
-- [ ] Alertas por Telegram: retomar cuando el usuario lo indique. Antes hay que resolver las tres decisiones de la propuesta.
+- [x] Alertas por Telegram: retomadas el 2026-11-19 y publicadas en la 2.3.0 (fase 5).
 - [x] Contenedor de revisión `centinela-revision`: eliminado (2026-11-19).
 
 ---
@@ -783,3 +783,17 @@ Resultado de las comprobaciones:
 **Pendientes**
 - [x] Validación local (Node 18 a 24: 1458 pruebas) y prueba del usuario con su bot en un contenedor temporal: avisos recibidos.
 - [x] Versión 2.5.0 publicada con aprobación del usuario.
+
+---
+
+## 2026-11-20 · Limpieza de la bitácora
+
+**Petición del usuario:** cerrar las casillas que quedaron abiertas en entradas antiguas.
+
+**Hecho**
+- Se marcaron las casillas de la fase 1, la fase 2c y la consulta de alertas, cada una con la fase donde se resolvió (2b, 2d, cierre de la 2.0.0, fase 3 o fase 5). No se cambió el resto del texto histórico.
+
+**Pendientes** (requieren aprobación del usuario)
+- [ ] Chat de Telegram por organización (diseño en `docs/plan-alertas.md`; versión estimada 2.6.0).
+- [ ] Probar el aviso de espacio en disco con un agente real y el bot del usuario.
+- Fuera de alcance: los PDF no se muestran en el visor web de GitHub («Unable to render code block»). Los archivos están bien; es un tema de GitHub y el usuario lo dejó de lado.
