@@ -87,6 +87,4 @@ Crea `js/widgets/mi-widget.js` con `NOC.widgets.register({ type, title, icon, de
 `npm test` (399 pruebas, sin dependencias). La integración continua (GitHub Actions, `.github/workflows/pruebas.yml`) ejecuta la suite con Node 18, 20, 22 y 24 y construye la imagen del contenedor en cada push y pull request a `main`.
 
 ## Documentación
-- [Bitácora del proyecto](docs/BITACORA.md)
-- [Auditoría 2026-11-18](docs/auditoria-2026-11-18.md)
 - [Despliegue seguro](docs/despliegue-seguro.md)

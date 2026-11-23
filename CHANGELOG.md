@@ -136,8 +136,6 @@ Versión de seguridad y calidad. Incluye cambios incompatibles: revisa **Cambiad
 - Suite de pruebas automáticas (`npm test`, 207 pruebas con `node:test`, sin dependencias).
 - Documentación en `docs/`:
   - Guía de despliegue seguro.
-  - Bitácora del proyecto.
-  - Auditoría inicial.
   - Manual con fuente editable (`docs/manual/manual.md`) y generador del PDF.
 
 ### Cambiado

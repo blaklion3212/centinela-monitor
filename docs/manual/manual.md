@@ -103,7 +103,7 @@ PowerShell:         $env:PORT=9000; $env:HOST="0.0.0.0"; node server/server.js
 | server/ | server.js (API y archivos estáticos), lib/ (planificador, almacenamiento, validación, usuarios y sesiones) y probes/ (ping, dns, http, tls, tcp, traceroute). |
 | agent/ | agent.js y sysmetrics.js: se copian a los servidores remotos. |
 | data/ | targets.json, settings.json y layout.json del Host, orgs.json, users.json (usuarios y contraseñas cifradas) y la carpeta orgs/ con los datos de cada organización (se crean solos). Respáldala: ahí está tu configuración. |
-| docs/ | Documentación del proyecto: este manual, la guía de despliegue seguro y la bitácora. |
+| docs/ | Documentación del proyecto: este manual, la guía de uso y la guía de despliegue seguro. |
 | test/ | Pruebas automáticas (se ejecutan con `npm test`, sin dependencias). |
 | Dockerfile, compose.yml, .dockerignore | Despliegue en contenedor (capítulo 14). |
 
