@@ -45,9 +45,12 @@ services:
     mem_limit: 512m
     pids_limit: 256
     sysctls:
-      net.ipv4.ping_group_range: "0 65535"   # ICMP sin privilegios; 65535 (no 2147483647) para que funcione también en podman rootless
+      # ICMP sin privilegios; 65535 (no 2147483647) para que funcione también en podman rootless.
+      # Forma de lista: la de clave y valor falla con podman-compose 1.0.x (Ubuntu 24.04).
+      - net.ipv4.ping_group_range=0 65535
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9595/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      # Forma de texto (CMD-SHELL): la de lista ["CMD", ...] queda mal armada con podman-compose 1.0.x.
+      test: "node -e \"fetch('http://127.0.0.1:9595/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""
       interval: 30s
       timeout: 5s
       retries: 3

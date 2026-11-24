@@ -152,3 +152,13 @@ Capítulos 3 (excepto 3.2 y 3.5), 5, 7, 10 (excepto los dos puntos indicados), 1
 
 - La captura de inicio de sesión (Figura 13) no muestra ningún texto con `admin01`, por lo que no necesitó nota.
 - La lista de usuarios (Figura 14) no muestra “contraseña por defecto”; se añadió nota solo por la etiqueta nueva.
+
+## Contenedor con podman-compose 1.0.x (versión 2.5.1, 23 de noviembre de 2026)
+
+| Sección | Cambio | Fuente |
+|---|---|---|
+| 14.4 | Filas de `sysctls` (forma de lista) y `healthcheck` (forma de texto), con el motivo (podman-compose 1.0.x). | `compose.yml`. |
+| 14.5 | Nota nueva sobre podman-compose 1.0.x y los dos fallos de un `compose.yml` anterior. | Prueba del usuario en Ubuntu 24.04 con podman-compose 1.0.6. |
+| 14.6 | Filas nuevas: «sysctl values must be in the form of KEY=VALUE» y «unhealthy» con podman-compose 1.0.x, con causa y solución. | Ídem. |
+| 14.7 | Indicación para quitar el bloque `sysctls` con la línea nueva. | `compose.yml`. |
+| Guía de uso | Solo cambia la versión y la fecha de la portada. | — |

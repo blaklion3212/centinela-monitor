@@ -1,6 +1,6 @@
 {
   "name": "centinela-monitor",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "description": "Dashboard modular de monitoreo de servicios (IPs y URLs) estilo PingPlotter/Zabbix",
   "private": true,
   "license": "UNLICENSED",

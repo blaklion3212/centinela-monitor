@@ -5,6 +5,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). V
 
 ## [Sin publicar]
 
+## [2.5.1] - 2026-11-23
+
+### Corregido
+- **Contenedor con podman-compose 1.0.x** (el paquete de Ubuntu 24.04, por ejemplo): `podman-compose up -d --build` construía la imagen, pero no creaba el contenedor y mostraba «net.ipv4.ping_group_range is invalid, sysctl values must be in the form of KEY=VALUE». `compose.yml` escribe ahora `sysctls` en forma de lista (`- net.ipv4.ping_group_range=0 65535`). Esa forma funciona con todas las versiones de podman-compose y con Docker Compose, y el valor no cambia. Si ya tenías un `compose.yml` propio, haz el mismo cambio en esas líneas.
+- README: tabla de compatibilidad del `compose.yml` con cada versión de podman-compose y de Docker Compose.
+- **Contenedor «unhealthy» con podman-compose anterior a la 1.5.0:** esas versiones armaban mal la comprobación de salud escrita como lista (`["CMD", "node", …]`), que fallaba siempre aunque Centinela funcionara. El registro del sistema repetía «status=1/FAILURE» cada 30 s. El `healthcheck` va ahora como texto, una forma que funciona igual con todas las versiones de podman-compose y con Docker Compose.
+- Manual (14.4, 14.5, 14.6 y 14.7) y guía de despliegue seguro: explican las dos formas nuevas y añaden los dos errores a la tabla de problemas frecuentes, con su solución.
+
 ## [2.5.0] - 2026-11-19
 
 ### Agregado

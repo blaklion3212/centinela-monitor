@@ -20,6 +20,21 @@ docker compose up -d --build      # o: podman-compose up -d --build
 ```
 Define `CENTINELA_ADMIN_PASSWORD` (mín. 8 caracteres) en un archivo `.env` junto a `compose.yml`; si no, la contraseña inicial aleatoria aparece en `docker logs centinela` / `podman logs centinela`. Abre `http://IP-DEL-SERVIDOR:9595` (puerto 9595 publicado en todas las interfaces; los datos van en el volumen `centinela-data`). Archivos: `Dockerfile`, `compose.yml`, `.dockerignore`. Dentro del contenedor `127.0.0.1` es el propio contenedor; para métricas de un servidor instala el agente en él. Detalles en el manual (capítulo 14). Paso a paso completo, desde instalar el motor hasta abrir el panel: sección 14.7 (Linux) y sección 14.8 (Windows; basada en la documentación de Docker y Podman, Centinela se probó en Linux).
 
+
+### Compatibilidad del `compose.yml`
+
+| Herramienta | Centinela 2.0.0 a 2.5.0 | Centinela 2.5.1 o posterior |
+|---|---|---|
+| podman-compose 1.0.x (paquete de Ubuntu 24.04, por ejemplo) | ❌ No crea el contenedor (`sysctl values must be in the form of KEY=VALUE`) | ✅ Probado (1.0.6) |
+| podman-compose 1.1.0 a 1.4.x | ⚠️ Funciona, pero el contenedor queda «unhealthy» | ✅ |
+| podman-compose 1.5.0 o posterior | ✅ Probado (1.5.0) | ✅ Probado (1.5.0) |
+| Docker Compose v2 (`docker compose`) | ✅ | ✅ |
+| docker-compose 1.x (el antiguo, con guion) | ✅ Desde la 1.27.0 | ✅ Desde la 1.27.0 |
+
+- La diferencia está en dos bloques del `compose.yml`: `sysctls` y `healthcheck`. Desde la 2.5.1 se escriben en una forma que entienden todas las versiones. Si usas una versión de Centinela anterior a la 2.5.1 con una podman-compose anterior a la 1.5.0, copia esos dos bloques del `compose.yml` actual o actualiza podman-compose (por ejemplo con `pipx install podman-compose`).
+- La compatibilidad con podman-compose se comprobó en el código de cada versión y con contenedores reales en la 1.0.6 y la 1.5.0.
+- Docker no se probó en el laboratorio. Las dos formas son parte de la especificación de Compose, que Docker Compose v2 sigue completa. docker-compose 1.x necesita la 1.27.0 o posterior porque el archivo no lleva la clave `version`.
+
 ## Alertas por Telegram (opcionales)
 Centinela puede avisar por Telegram cuando un servicio **cae**, se **recupera** y, según lo que elijas en el panel **Qué avisar** (nueve tipos: caída, recuperación, certificado vencido, certificado por vencer, certificado no confiable, alta latencia o pérdida, recursos del servidor, espacio en disco y otras degradaciones), por otros problemas. Por defecto solo avisa de caídas, recuperaciones y certificado vencido; la 2.5.0 convierte sola tu configuración anterior y no añade variables de entorno. Es **opcional y viene desactivada**: solo los administradores la configuran, en *Ajustes → Alertas*, con un panel de ayuda «Cómo configurarlo» (crear el bot con @BotFather, guardar el token, buscar el chat, enviar un mensaje de prueba y activar). Antirruido: avisa tras N fallos seguidos (2 por defecto), agrupa los avisos en ventanas de 30 s, no repite caídas ya avisadas tras reiniciar y avisa la recuperación. El servidor necesita salida HTTPS a `api.telegram.org:443` (sin proxy en la 2.3.0). Los avisos salen de tu red y pasan por los servidores de Telegram, sin cifrado de extremo a extremo.
 

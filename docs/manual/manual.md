@@ -1,8 +1,8 @@
 ---
 title: Manual de usuario y configuración
 subtitle: Dashboard modular de monitoreo de IPs y URLs, estilo PingPlotter / Zabbix
-version: 2.5.0
-date: 19 de noviembre de 2026
+version: 2.5.1
+date: 23 de noviembre de 2026
 ---
 
 # 1. Introducción
@@ -55,7 +55,7 @@ El sistema tiene tres piezas. Entender para qué sirve cada una evita la confusi
 
 1. Descomprime el proyecto (carpeta `centinela-monitor`) en el servidor que hará las mediciones.
 2. Abre una terminal en esa carpeta y ejecuta: `node server/server.js` (también sirve `npm start`).
-3. La terminal muestra la dirección, por ejemplo `Centinela 2.5.0 → http://127.0.0.1:8080`, el número de usuarios, la carpeta de datos usada y, solo en el primer arranque, el usuario inicial con su contraseña (sección 9.1).
+3. La terminal muestra la dirección, por ejemplo `Centinela 2.5.1 → http://127.0.0.1:8080`, el número de usuarios, la carpeta de datos usada y, solo en el primer arranque, el usuario inicial con su contraseña (sección 9.1).
 4. Abre esa dirección en el navegador e inicia sesión con el usuario `administrador` y la contraseña inicial (sección 9.1). Si la contraseña era la aleatoria del registro, el panel te pedirá cambiarla antes de continuar. La insignia de arriba debe decir En vivo.
 5. Ve a Objetivos y agrega tus IPs y URLs (capítulo 6). En el primer arranque el sistema crea data/ con objetivos de ejemplo (DNS Google, DNS Cloudflare, Google, Wikipedia, Sitio de ejemplo y el servidor local); puedes borrarlos.
 
@@ -461,7 +461,7 @@ La primera vez que arranca el servidor (cuando no existe data/users.json) crea u
 En el registro de arranque (la consola con `node server/server.js`; en contenedor, `docker logs centinela` o `podman logs centinela`) la contraseña generada aparece así:
 
 ```
-Centinela 2.5.0 → http://127.0.0.1:8080
+Centinela 2.5.1 → http://127.0.0.1:8080
 Acceso: inicio de sesión activado (1 usuario(s))
 Usuario inicial creado: administrador (deberá cambiar la contraseña al entrar)
 ============================================================
@@ -1001,9 +1001,9 @@ docker compose down -v                  # detener Y BORRAR los datos (usuarios, 
 | security_opt: no-new-privileges | activado | Impide que un proceso del contenedor obtenga más privilegios de los que ya tiene. |
 | read_only y tmpfs: /tmp | activado | El sistema de archivos del contenedor es de solo lectura; solo se puede escribir en /tmp (memoria) y en el volumen /data. |
 | mem_limit y pids_limit | 512m / 256 | Tope de memoria (512 MB) y de procesos (256) del contenedor. Súbelos solo si monitoreas cientos de objetivos y lo ves justo. |
-| sysctls: net.ipv4.ping_group_range | "0 65535" | Permite ICMP al usuario sin privilegios con el que corre Centinela dentro del contenedor. Se usa 65535 (y no 2147483647) para que también funcione con Podman sin root. Si tu motor rechaza este parámetro, quítalo: normalmente basta con NET_RAW. |
+| sysctls: net.ipv4.ping_group_range | 0 65535 | Permite ICMP al usuario sin privilegios con el que corre Centinela dentro del contenedor. Se usa 65535 (y no 2147483647) para que también funcione con Podman sin root. Va en forma de lista (`- net.ipv4.ping_group_range=0 65535`), la única que entiende podman-compose 1.0.x. Si tu motor rechaza este parámetro, quítalo: normalmente basta con NET_RAW. |
 | restart | unless-stopped | El contenedor se levanta solo tras un reinicio del servidor. Con Podman sin root requiere activar podman-restart.service (sección 14.5). |
-| healthcheck | cada 30 s | Consulta /api/health; el motor marca el contenedor como saludable o no. |
+| healthcheck | cada 30 s | Consulta /api/health; el motor marca el contenedor como saludable o no. Va como texto (`test: "node -e …"`), la forma que podman-compose 1.0.x arma bien. |
 
 > **Nota:** en la red de un contenedor, la comprobación de salud y el panel usan el puerto interno 9595. Si publicas el panel con otro puerto en "ports", el healthcheck no cambia.
 
@@ -1034,7 +1034,8 @@ docker compose down -v                  # detener Y BORRAR los datos (usuarios, 
 - **No uses `podman restart centinela`** en Podman sin root: en el equipo de pruebas falla con `rootless netns: kill network process: permission denied` y deja el contenedor **detenido** (no es un fallo de Centinela). Reinicia con `podman-compose -p <proyecto> restart` (el contenedor queda healthy y /api/health responde) o con `podman stop centinela` seguido de `podman start centinela`. Si por error quedó detenido, `podman start centinela` lo levanta.
 - En modo sin root, los puertos por debajo del 1024 están restringidos; el 9595 no tiene problema.
 - Si Podman rechaza sysctls, quita ese bloque y asegúrate de mantener NET_RAW.
-- Con Podman sin root el valor de ping_group_range debe ser "0 65535", el que trae el compose.yml; con el valor antiguo 2147483647 el contenedor no arrancaba (“Invalid argument”).
+- podman-compose 1.0.x (el paquete de Ubuntu 24.04, por ejemplo) solo entiende `sysctls` en forma de lista y arma mal el `healthcheck` en forma de lista (las versiones 1.1.0 a 1.4.x también). Desde la 2.5.1 el compose.yml trae `sysctls` como lista y el `healthcheck` como texto. Con un compose.yml anterior el contenedor no se crea («sysctl values must be in the form of KEY=VALUE») o queda «unhealthy» (sección 14.6). Con un compose.yml anterior a la 2.5.1 hace falta podman-compose 1.5.0 o posterior.
+- Con Podman sin root el valor de ping_group_range debe ser 0 65535, el que trae el compose.yml; con el valor antiguo 2147483647 el contenedor no arrancaba (“Invalid argument”).
 
 ## 14.6 Problemas frecuentes en contenedor
 
@@ -1045,6 +1046,7 @@ docker compose down -v                  # detener Y BORRAR los datos (usuarios, 
 | Al reiniciar se pierden usuarios y objetivos | No hay volumen o se usó down -v. | Mantén el volumen de /data y haz respaldos. |
 | “EACCES: permission denied” al guardar en /data | La carpeta montada no permite escribir al usuario node (uid 1000). | Cambia su propietario: chown 1000:1000 ./datos (o usa el volumen nombrado). |
 | El contenedor aparece “unhealthy” | El servidor no arrancó; suele ser un JSON de /data mal escrito. | Mira docker compose logs: indica el archivo a corregir. |
+| El contenedor aparece “unhealthy” con podman-compose anterior a la 1.5.0 aunque el panel abre bien, y el registro del sistema repite «Main process exited, code=exited, status=1/FAILURE» cada 30 s | compose.yml anterior a la 2.5.1: podman-compose 1.4.x y anteriores arman mal el `healthcheck` en forma de lista y la comprobación falla siempre. Centinela funciona; solo falla la comprobación. | Usa el compose.yml de la 2.5.1, que lo trae como texto, y recrea el contenedor con `podman-compose down` y `podman-compose up -d --build`. |
 | No sé la contraseña del administrador | No definiste CENTINELA_ADMIN_PASSWORD en .env y no anotaste la aleatoria. | Búscala en el registro de la primera ejecución (docker logs centinela). Si ya no está, borra users.json del volumen y reinicia (sección 9.6). |
 | Tras `podman restart centinela` el contenedor quedó detenido (“rootless netns: kill network process: permission denied”) | Fallo de Podman sin root en ese tipo de equipo, no de Centinela. | `podman start centinela` y, para reiniciar, usa `podman-compose -p <proyecto> restart` o `podman stop` + `podman start` (sección 14.5). |
 | Tras reiniciar el servidor el contenedor no se levanta solo | `podman-restart.service` del usuario está deshabilitado (Podman sin root). | `systemctl --user enable podman-restart.service` y `loginctl enable-linger $USER` (sección 14.5). |
@@ -1054,6 +1056,7 @@ docker compose down -v                  # detener Y BORRAR los datos (usuarios, 
 | Error de puerto en uso al iniciar (“port is already allocated”, “address already in use” o similar) | Otro programa usa el 9595 o queda un contenedor anterior. | Busca quién lo usa: en Linux `ss -ltnp \| grep 9595`; en Windows `netstat -ano \| findstr 9595`. Detén ese programa o cambia el primer número de “ports” (por ejemplo "8080:9595"), y abre el panel con el puerto nuevo. |
 | “permission denied” al conectar con el socket de Docker (Linux) | Tu usuario no pertenece al grupo docker. | `sudo usermod -aG docker $USER` y vuelve a iniciar sesión (sección 14.7). No uses `sudo` para todo como solución permanente. |
 | La contraseña del .env no se aplica (sale aleatoria o no entra) | El archivo se llama `.env.txt`, no está junto a compose.yml, tiene un BOM o codificación rara, o ya existía users.json en el volumen. | Comprueba el nombre exacto (en Windows activa “Extensiones de nombre de archivo” en el Explorador), vuélvelo a crear en ASCII (secciones 14.7 y 14.8) y recuerda que solo se lee la primera vez (nota de 14.1). |
+| `podman-compose up` termina con “net.ipv4.ping_group_range is invalid, sysctl values must be in the form of KEY=VALUE” y luego “no container with name or ID centinela” | podman-compose 1.0.x (Ubuntu 24.04) con un compose.yml anterior a la 2.5.1, que escribe `sysctls` como clave y valor. | Usa el compose.yml de la 2.5.1 o cambia esas líneas a la forma de lista: `sysctls:` y debajo `- net.ipv4.ping_group_range=0 65535`. Vuelve a ejecutar `podman-compose up -d --build`. También sirve instalar podman-compose 1.5.0 o posterior (por ejemplo con `pipx install podman-compose`); con la 1.1.0 a la 1.4.x el contenedor se crea, pero queda «unhealthy». |
 | `podman compose` o `podman-compose`: “no se encuentra el proveedor de compose” o error de conexión con la máquina | Falta el proveedor de compose, o (Windows y Mac) la máquina de Podman no está iniciada. | Instala `podman-compose` o docker-compose (sección 14.8) y ejecuta `podman machine start`; `podman machine list` muestra su estado. |
 
 ## 14.7 Paso a paso en Linux
@@ -1420,7 +1423,7 @@ Con Podman:
 podman compose up -d --build
 ```
 
-La primera vez descarga la imagen base y construye; puede tardar varios minutos. Si Podman rechaza el bloque `sysctls` del compose.yml, quítalo (las líneas `sysctls:` y `net.ipv4.ping_group_range`) y conserva `cap_add: NET_RAW` (sección 14.5). Revisa el estado y el registro:
+La primera vez descarga la imagen base y construye; puede tardar varios minutos. Si Podman rechaza el bloque `sysctls` del compose.yml, quítalo (las líneas `sysctls:` y `- net.ipv4.ping_group_range=0 65535`) y conserva `cap_add: NET_RAW` (sección 14.5). Revisa el estado y el registro:
 
 ```
 docker compose ps

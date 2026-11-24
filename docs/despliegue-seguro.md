@@ -171,7 +171,7 @@ El agente puede escuchar por HTTPS. Con TLS el token y las métricas viajan cifr
 
 - **Endurecimiento aplicado** en `compose.yml`: `cap_drop: ALL` con solo `NET_RAW` (necesario: comprobado en laboratorio, sin él el ping falla por el `setcap` del binario; sirve también para traceroute), `no-new-privileges`, sistema de archivos de solo lectura con `tmpfs` en `/tmp`, usuario sin privilegios (`node`), límites de memoria (512 MB) y de procesos (256), y comprobación de salud.
 - **Reiniciar y arrancar con el equipo (Podman):** ver «Podman: reinicio y arranque con el equipo» más abajo.
-- **ICMP sin privilegios:** `net.ipv4.ping_group_range: "0 65535"`. Se usa 65535 (y no 2147483647) para que también funcione con podman rootless.
+- **ICMP sin privilegios:** `- net.ipv4.ping_group_range=0 65535`. Se usa 65535 (y no 2147483647) para que también funcione con podman rootless. Va en forma de lista porque podman-compose 1.0.x no entiende la forma de clave y valor.
 - **`.env`:** crea un archivo `.env` junto a `compose.yml` con `CENTINELA_ADMIN_PASSWORD=...` (mín. 8 caracteres). Añade también `CENTINELA_ALLOWED_HOSTS=...` (ver arriba). Protégelo (`chmod 600 .env`) y no lo subas a ningún repositorio. Si usas las alertas por Telegram, define ahí también `CENTINELA_TELEGRAM_TOKEN` (sección «Alertas por Telegram»).
 
 ## Podman: reinicio y arranque con el equipo

@@ -1,8 +1,8 @@
 ---
 title: Guía de uso
 subtitle: Cómo usar el panel de monitoreo, función por función
-version: 2.5.0
-date: 19 de noviembre de 2026
+version: 2.5.1
+date: 23 de noviembre de 2026
 ---
 
 # Antes de empezar
